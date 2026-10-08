@@ -1,0 +1,27 @@
+# Local planning docs and dev notes — not part of the public package.
+PLAN.md
+TASK*.md
+FEEDBACK*.md
+waystone-before-direction-mismatch.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# uv
+.uv/
+
+# Build artifacts
+dist/
+build/
+*.whl
+
+# Test / cache
+.pytest_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
