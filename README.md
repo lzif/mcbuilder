@@ -5,9 +5,10 @@ for agents to build complex structures while reducing code complexity —
 without reducing detail.
 
 The loop: an agent writes a builder script → mcbuilder validates every block
-against the real block registry → exports `.schem` / `.litematic` / `.nbt` /
-`.mcfunction` → renders labeled preview images from customizable angles →
-the agent iterates on what it sees. Then paste on the server with WorldEdit.
+against the real block registry → exports `.litematic` (plus `.schem`,
+`.nbt`, `.mcfunction`) → renders labeled preview images from customizable
+angles → the agent iterates on what it sees. Then load the `.litematic` in
+Litematica and build it in survival, guided by the hologram.
 
 ## Install
 
@@ -42,13 +43,9 @@ mcbuild run waystone.py --out dist/ --preview
 exported files, `report.json` (errors with file:line provenance, warnings,
 block counts, labeled view list), and `previews/` PNGs.
 
-Then:
-
-```
-# in-game (WorldEdit)
-//schem load waystone
-//paste -a
-```
+Then load `waystone.litematic` in Litematica (client-side mod) and build it
+in survival following the hologram. `report.json`'s `block_counts` doubles
+as your material shopping list.
 
 ## Block versions
 
