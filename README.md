@@ -5,10 +5,15 @@ for agents to build complex structures while reducing code complexity —
 without reducing detail.
 
 The loop: an agent writes a builder script → mcbuilder validates every block
-against the real block registry → exports `.litematic` (plus `.schem`,
-`.nbt`, `.mcfunction`) → renders labeled preview images from customizable
-angles → the agent iterates on what it sees. Then load the `.litematic` in
-Litematica and build it in survival, guided by the hologram.
+against the real block registry → renders labeled preview images from
+customizable angles → the agent iterates on what it sees. `report.json`'s
+`block_counts` is your survival material shopping list.
+
+> **Deploy format: TBD.** The deploy artifact (the file you actually build
+> from in-game) is still being decided — `.mcstructure`, `.litematic`,
+> `.schem`, and a mcbuilder-native layer-by-layer build guide are all on
+> the table. Everything else — the DSL, validator, parts catalog, preview
+> renderer, and CLI — is format-agnostic and works today.
 
 ## Install
 
@@ -39,13 +44,9 @@ mcbuild check waystone.py          # validate only, fast
 mcbuild run waystone.py --out dist/ --preview
 ```
 
-`mcbuild run` writes an auto-versioned `dist/run-001/` directory with the
-exported files, `report.json` (errors with file:line provenance, warnings,
-block counts, labeled view list), and `previews/` PNGs.
-
-Then load `waystone.litematic` in Litematica (client-side mod) and build it
-in survival following the hologram. `report.json`'s `block_counts` doubles
-as your material shopping list.
+`mcbuild run` writes an auto-versioned `dist/run-001/` directory with
+`report.json` (errors with file:line provenance, warnings, block counts,
+labeled view list), and `previews/` PNGs.
 
 ## Block versions
 
