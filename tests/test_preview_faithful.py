@@ -376,3 +376,64 @@ def test_build_render_faithful_tier(tmp_path, assets_root):
                      tier="faithful", title="T")
     assert len(paths) == 1 and paths[0].name == "iso.png"
     assert paths[0].stat().st_size > 1000
+
+
+def test_draw_textured_quad_diamond_not_twisted():
+    """Regression (Luki 2026-10-09, "texture miring"): a diamond quad
+    (top face in iso view) must keep its texture orientation, not twist
+    it 90°.
+
+    The old _draw_textured_quad sorted corners by screen position into
+    UL/LL/LR/UR for PIL QUAD; for a diamond the "top two" by screen-y are
+    the left/right corners, so the texture landed rotated 90° — stone
+    brick courses ran across the iso diagonal instead of along it.
+    """
+    # 16×16 quadrant texture: TL=red, TR=green, BL=blue, BR=yellow.
+    tex = Image.new("RGB", (16, 16))
+    px = tex.load()
+    for y in range(16):
+        for x in range(16):
+            if y < 8:
+                px[x, y] = (255, 0, 0) if x < 8 else (0, 255, 0)
+            else:
+                px[x, y] = (0, 0, 255) if x < 8 else (255, 255, 0)
+    # Diamond (iso top face); UV order [(u0,v0),(u0,v1),(u1,v1),(u1,v0)]
+    # with corner texels [(0,0),(0,16),(16,16),(16,0)].
+    pts_uv = [(16, 0, 0, 0), (32, 16, 0, 16),
+              (16, 32, 16, 16), (0, 16, 16, 0)]
+    canvas = Image.new("RGB", (32, 32), (255, 255, 255))
+    pf._draw_textured_quad(canvas, pts_uv, tex)
+    c = canvas.load()
+    # 25% from each vertex toward the center: must sample the quadrant
+    # whose corner texel sits at that vertex.
+    assert c[16, 4] == (255, 0, 0), "top vertex shows (u0,v0)=red"
+    assert c[28, 16] == (0, 0, 255), "right vertex shows (u0,v1)=blue"
+    assert c[16, 28] == (255, 255, 0), "bottom vertex shows (u1,v1)=yellow"
+    assert c[4, 16] == (0, 255, 0), "left vertex shows (u1,v0)=green"
+
+
+@needs_real_assets
+def test_stair_tread_uv_painted_on_not_world_sorted():
+    """Regression (Luki 2026-10-09, "texture miring"): UV corners are
+    assigned in MODEL space and carried through rotations (painted-on).
+
+    The old code sorted ROTATED corners by world axes, spinning textures
+    90° on models with x/y rotation (and degenerating for side faces
+    turned 90°). For stone_brick_stairs[facing=south] (y=90, uvlock),
+    the tread's (u0,v0) corner (model x-min/z-min of the tall element's
+    top) must land at world (1.0, 1.0, 0.5) — the old world-sorted code
+    put it at (0.0, 1.0, 0.5).
+    """
+    tex_cache: dict = {}
+    quads, fb = pf.resolve_block_quads(
+        "minecraft:stone_brick_stairs[facing=south,half=bottom,shape=straight]",
+        _REAL_ROOT, tex_cache, set())
+    assert not fb
+    treads = [q for q in quads
+              if q[1] == (0, 1, 0)
+              and all(abs(p[1] - 1.0) < 1e-9 for p in q[0])]
+    assert treads, "tread (y=1.0 up face) present"
+    x, y, z = treads[0][0][0]  # (u0,v0) corner, UV order
+    assert all(abs(a - b) < 1e-9 for a, b in
+               zip((x, y, z), (1.0, 1.0, 0.5))), \
+        f"(u0,v0) at {(x, y, z)}, want (1.0, 1.0, 0.5)"

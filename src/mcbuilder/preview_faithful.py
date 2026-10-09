@@ -20,10 +20,18 @@ Orientation model (verified against the vanilla assets, 2026-10-09):
   south-facing top-half stair lands tall-at-south, top-half).
 - ``facing`` for stairs = the direction of the tall part (same source).
 
-``uvlock``: when true, UVs are assigned from the WORLD normal (texture
-stays world-aligned: texture-up is +Y on sides, −Z on top); when false
-the texture is painted on (UVs follow the model). This is what keeps
-top-half stair side textures from rendering upside-down.
+``uvlock``: UVs are always assigned painted-on in MODEL space (the only
+density-preserving behavior — a naive world-fixed assignment breaks
+texel density on rotated non-square faces, which vanilla cannot do).
+When uvlock is true, side faces additionally get v0 pinned to the top so
+the texture stays upright instead of rotating with the model (this is
+what keeps top-half stair side textures from rendering upside-down).
+Painted-on assignment happens in MODEL space — corners are ordered by
+the face's own UV axes *before* element/model rotations carry them
+along. (Assigning after rotation spun textures 90° on any model with
+x/y rotation — the tilted stone-brick courses Luki spotted 2026-10-09
+— and degenerated for side faces turned 90°, where the sort axis is
+constant.)
 
 Determinism rules (documented, pinned by tests):
 
@@ -449,14 +457,16 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                 if face_name not in _FACE_NORMALS:
                     continue
                 corners = _face_base_corners(face_name, f, t)
-                if el_rot:
-                    origin = el_rot.get("origin", [8, 8, 8])
-                    axis = el_rot.get("axis", "y")
-                    angle = el_rot.get("angle", 0)
-                    corners = [_apply_element_rotation(p, origin, axis, angle)
-                               for p in corners]
-                corners = [_apply_model_rotation(p, x_deg, y_deg)
-                           for p in corners]
+
+                def _xform(p):
+                    q = p
+                    if el_rot:
+                        q = _apply_element_rotation(
+                            q, el_rot.get("origin", [8, 8, 8]),
+                            el_rot.get("axis", "y"),
+                            el_rot.get("angle", 0))
+                    return _apply_model_rotation(q, x_deg, y_deg)
+
                 local_n = _FACE_NORMALS[face_name]
                 if el_rot:
                     # Rotate the normal as a direction: offset from the
@@ -492,10 +502,32 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                     continue
                 crop = _face_uv_rotation_crop(
                     crop, int(face.get("rotation", 0)))
-                # UV corner assignment.
-                key_name = _normal_name(world_n) if uvlock else _normal_name(
-                    _snap_normal(local_n))
-                ordered = _order_corners_uv(corners, key_name)
+                # UV corner assignment: painted-on for BOTH uvlock values.
+                # Vanilla semantics (verified against the blockstate/model
+                # JSONs): the texture is attached to the model in model
+                # space and carried through the x/y rotations. A naive
+                # "world-fixed" assignment (sorting rotated corners by
+                # world axes) breaks texel density on rotated non-square
+                # faces (e.g. a stair tread under y=90: 8 texels/block
+                # horizontally, 32 vertically) and degenerates for side
+                # faces turned 90° (sort axis constant across corners) —
+                # vanilla cannot do that, so painted-on is the only
+                # density-preserving behavior.
+                ordered = [_xform(p) for p in
+                           _order_corners_uv(corners, face_name)]
+                if uvlock:
+                    # uvlock keeps the texture from rotating with the
+                    # model: for SIDE faces, ensure v0 is at the top so
+                    # the texture stays upright (painted-on alone would
+                    # leave x-rotated sides, e.g. top-half stairs,
+                    # upside-down). y-rotations preserve up, so this only
+                    # ever triggers for x-rotations.
+                    _, wn_y, _ = world_n
+                    if abs(wn_y) < 0.5 and ordered[0][1] < ordered[1][1]:
+                        # v0 below v1: flip v -> [(u0,v1),(u0,v0),
+                        # (u1,v0),(u1,v1)].
+                        ordered = [ordered[1], ordered[0],
+                                   ordered[3], ordered[2]]
                 shade = _SHADES.get(world_n, 0.75)
                 quads.append((ordered, world_n,
                               _shade_image(crop, shade)))
@@ -536,36 +568,48 @@ def resolve_block_quads(canonical: str, assets_root: Path | None,
 # drawing
 # ---------------------------------------------------------------------------
 
-def _order_screen_uv(pairs):
-    """Order (sx, sy, tx, ty) pairs as NW, SW, SE, NE (screen, y down)."""
-    by_y = sorted(pairs, key=lambda p: (p[1], p[0]))
-    top, bottom = by_y[:2], by_y[2:]
-    nw, ne = sorted(top, key=lambda p: p[0])
-    sw, se = sorted(bottom, key=lambda p: p[0])
-    return [nw, sw, se, ne]
-
-
 def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image):
     """Warp a texture across a quad. pts_uv: [(sx,sy,tx,ty)] ×4 in UV order.
 
     The UV order is [(u0,v0), (u0,v1), (u1,v1), (u1,v0)] which matches the
-    texture crop's corners [(0,0), (0,h), (w,h), (w,0)].
+    texture crop's corners [(0,0), (0,h), (w,h), (w,0)]. The order is cyclic
+    (orthographic projection preserves cyclicity), so the texture→screen
+    map is affine: solve it from the 4 correspondences and derive the
+    correct QUAD data (texels at the output-rect corners). A screen-space
+    "top two / bottom two" reorder would twist diamonds (top faces in iso
+    get their texture rotated 90°); the affine solve is exact for all
+    convex quads.
     """
-    ordered = _order_screen_uv(pts_uv)
-    xs = [p[0] for p in ordered]
-    ys = [p[1] for p in ordered]
+    # Affine texture->screen: screen = M @ tex + t. Solve from the 4
+    # (cyclic) correspondences, then invert for screen->texture.
+    src = np.array([(tx, ty) for _, _, tx, ty in pts_uv], dtype=float)
+    dst = np.array([(sx, sy) for sx, sy, _, _ in pts_uv], dtype=float)
+    A = np.column_stack([src, np.ones(4)])
+    try:
+        (m11, m12, t1), *_ = np.linalg.lstsq(A, dst[:, 0], rcond=None)
+        (m21, m22, t2), *_ = np.linalg.lstsq(A, dst[:, 1], rcond=None)
+        Minv = np.linalg.inv(np.array([[m11, m12], [m21, m22]]))
+    except np.linalg.LinAlgError:
+        return
+    t = np.array([t1, t2])
+    xs = [p[0] for p in pts_uv]
+    ys = [p[1] for p in pts_uv]
     x0, x1 = math.floor(min(xs)), math.ceil(max(xs))
     y0, y1 = math.floor(min(ys)), math.ceil(max(ys))
     bw, bh = x1 - x0, y1 - y0
     if bw < 1 or bh < 1:
         return
-    data = []
-    for _, _, tx, ty in ordered:
-        data.extend((tx, ty))
-    warped = tex.transform((bw, bh), Image.QUAD, tuple(data), Image.NEAREST)
+    # Texels at the output-rect corners (UL, LL, LR, UR).
+    corners = np.array([[x0, y0], [x0, y1], [x1, y1], [x1, y0]])
+    data = (corners - t) @ Minv.T
+    quad_data = []
+    for tx, ty in data:
+        quad_data.extend((float(tx), float(ty)))
+    warped = tex.transform((bw, bh), Image.QUAD, tuple(quad_data),
+                           Image.NEAREST)
     mask = Image.new("L", (bw, bh), 0)
     ImageDraw.Draw(mask).polygon(
-        [(sx - x0, sy - y0) for sx, sy, _, _ in ordered], fill=255)
+        [(sx - x0, sy - y0) for sx, sy, _, _ in pts_uv], fill=255)
     canvas.paste(warped, (x0, y0), mask)
 
 
