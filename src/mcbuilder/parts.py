@@ -19,6 +19,8 @@ Direction vocabulary: ``direction`` params use "north"/"south"/"east"/
 
 from __future__ import annotations
 
+from mcbuilder.errors import McbuilderError
+
 # Horizontal step per direction: +X = east, +Z = south (plan §4.1).
 _DIRECTIONS: dict[str, tuple[int, int]] = {
     "north": (0, -1),
@@ -113,14 +115,14 @@ def stairs_run(
     """
     dir_key = direction.lower()
     if dir_key not in _DIRECTIONS:
-        raise ValueError(
+        raise McbuilderError(
             f"stairs_run: invalid direction {direction!r}; "
             f"expected one of {sorted(_DIRECTIONS)}"
         )
     if length < 1:
-        raise ValueError(f"stairs_run: length must be >= 1, got {length}")
+        raise McbuilderError(f"stairs_run: length must be >= 1, got {length}")
     if width < 1:
-        raise ValueError(f"stairs_run: width must be >= 1, got {width}")
+        raise McbuilderError(f"stairs_run: width must be >= 1, got {width}")
     dx, dz = _DIRECTIONS[dir_key]
     facing = _OPPOSITE[dir_key]
     step_block = _merge_props(block, {"facing": facing, "half": "bottom"})
@@ -142,7 +144,7 @@ def pillar(build, base: tuple[int, int, int], height: int, block: str) -> None:
     inference"), and only direction-implying parts compute properties.
     """
     if height < 1:
-        raise ValueError(f"pillar: height must be >= 1, got {height}")
+        raise McbuilderError(f"pillar: height must be >= 1, got {height}")
     x, y, z = base
     for i in range(height):
         build.set(x, y + i, z, block)
@@ -157,7 +159,7 @@ def railing(
     """Straight horizontal run of blocks from ``start`` to ``end`` inclusive.
 
     Must be axis-aligned (x or z constant, y constant across both points)
-    else a ``ValueError`` is raised naming the problem.
+    else a ``McbuilderError`` is raised naming the problem.
 
     Typically used with fence blocks. Note for the agent: the exporter
     writes the bare block (``minecraft:oak_fence``) and the *game* resolves
@@ -170,12 +172,12 @@ def railing(
     x1, y1, z1 = start
     x2, y2, z2 = end
     if y1 != y2:
-        raise ValueError(
+        raise McbuilderError(
             f"railing: start and end must share the same y level "
             f"(got y={y1} and y={y2})"
         )
     if x1 != x2 and z1 != z2:
-        raise ValueError(
+        raise McbuilderError(
             f"railing: run must be axis-aligned (x or z constant); "
             f"got start=({x1}, {y1}, {z1}) end=({x2}, {y2}, {z2})"
         )

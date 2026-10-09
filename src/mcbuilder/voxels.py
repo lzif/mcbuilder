@@ -46,6 +46,7 @@ class VoxelGrid:
         self._palette: list[str] = []
         self._index: dict[str, int] = {}
         self._provenance: dict[int, tuple[str, int]] = {}
+        self._overwrites = 0
 
     @property
     def max_dims(self) -> tuple[int, int, int]:
@@ -78,9 +79,24 @@ class VoxelGrid:
             idx = len(self._palette)
             self._palette.append(canonical)
             self._index[canonical] = idx
+        old = self._cells.get((x, y, z))
+        if (
+            old is not None
+            and old != idx
+            and self._palette[old] != AIR
+            and canonical != AIR
+        ):
+            # A real block replaced by a different real block (carving with
+            # air, or re-placing the same block, doesn't count).
+            self._overwrites += 1
         self._cells[(x, y, z)] = idx
         if provenance is not None and idx not in self._provenance:
             self._provenance[idx] = provenance
+
+    @property
+    def overwrite_count(self) -> int:
+        """Cells where a real block was replaced by a different real block."""
+        return self._overwrites
 
     def to_dense(self) -> tuple[np.ndarray, list[str], dict[int, tuple[str, int]]]:
         """Materialize the placed region as an int32 array.
@@ -98,23 +114,42 @@ class VoxelGrid:
 
         An empty grid (no non-air cells) returns a ``(0, 0, 0)`` int32
         array.
+
+        The palette is compacted to entries actually referenced by the
+        array: placements fully overwritten later leave no phantom entries,
+        so validation and block counts never see blocks with zero cells.
         """
         bb = self.bounds()
         if bb is None:
-            return (
-                np.zeros((0, 0, 0), dtype=np.int32),
-                list(self._palette),
-                dict(self._provenance),
+            arr = np.zeros((0, 0, 0), dtype=np.int32)
+        else:
+            (minx, miny, minz), (maxx, maxy, maxz) = bb
+            arr = np.full(
+                (maxx - minx + 1, maxy - miny + 1, maxz - minz + 1),
+                UNSET,
+                dtype=np.int32,
             )
-        (minx, miny, minz), (maxx, maxy, maxz) = bb
-        arr = np.full(
-            (maxx - minx + 1, maxy - miny + 1, maxz - minz + 1),
-            UNSET,
-            dtype=np.int32,
-        )
-        for (x, y, z), idx in self._cells.items():
-            arr[x - minx, y - miny, z - minz] = idx
-        return arr, list(self._palette), dict(self._provenance)
+            for (x, y, z), idx in self._cells.items():
+                arr[x - minx, y - miny, z - minz] = idx
+        palette = list(self._palette)
+        provenance = dict(self._provenance)
+        # Drop palette entries no cell references (e.g. placements fully
+        # overwritten later): phantoms must not be validated or counted.
+        used = sorted({int(v) for v in arr.flat if v >= 0})
+        if len(used) != len(palette):
+            remap = {old: new for new, old in enumerate(used)}
+            lookup = np.full(len(palette), UNSET, dtype=np.int32)
+            for old, new in remap.items():
+                lookup[old] = new
+            compacted = np.full(arr.shape, UNSET, dtype=np.int32)
+            mask = arr >= 0
+            compacted[mask] = lookup[arr[mask]]
+            arr = compacted
+            palette = [palette[old] for old in used]
+            provenance = {
+                remap[old]: provenance[old] for old in used if old in provenance
+            }
+        return arr, palette, provenance
 
     def bounds(self) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
         """Inclusive ``((minx, miny, minz), (maxx, maxy, maxz))`` bbox.

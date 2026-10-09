@@ -24,9 +24,10 @@ def test_schema_keys():
     assert set(report.keys()) == {
         "errors", "warnings", "block_counts",
         "dimensions", "views", "artifacts", "run_dir",
+        "overwritten_placements",
     }
     assert report["artifacts"] == []
-    assert report["dimensions"] == [9, 8, 9]
+    assert report["dimensions"] == {"x": 9, "y": 8, "z": 9}
     assert report["run_dir"] == "dist/run-003"
 
 

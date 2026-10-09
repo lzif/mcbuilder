@@ -76,8 +76,13 @@ def _load_script(path: Path):
     except CliError:
         raise
     except Exception as e:  # noqa: BLE001 - surfaced as a clean message below
+        loc = _script_error_location(e, path)
+        at = f" (at {loc})" if loc else ""
+        if isinstance(e, errors_mod.McbuilderError):
+            # DSL misuse: lead with the message, point at the script line.
+            raise CliError(f"{path.name}: {e}{at}") from None
         raise CliError(
-            f"failed to import {path.name}: {type(e).__name__}: {e}"
+            f"failed to import {path.name}: {type(e).__name__}: {e}{at}"
         ) from None
     build_obj = getattr(module, "BUILD", None)
     if build_obj is None:
@@ -91,6 +96,31 @@ def _load_script(path: Path):
             f"got {type(build_obj).__name__}"
         )
     return module, build_obj
+
+
+def _script_error_location(exc: BaseException, script_path: Path) -> str | None:
+    """Deepest frame of the user's script in the traceback, as ``path:line``.
+
+    DSL misuse raises inside the library; the agent needs the script line
+    of the responsible call, not the library frame. Returns ``None`` when
+    the traceback never touches the script.
+    """
+    try:
+        target = str(script_path.resolve())
+    except OSError:
+        target = str(script_path)
+    location = None
+    tb = exc.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        try:
+            name = str(Path(frame.f_code.co_filename).resolve())
+        except OSError:
+            name = frame.f_code.co_filename
+        if name == target:
+            location = f"{script_path}:{frame.f_lineno}"
+        tb = tb.tb_next
+    return location
 
 
 # ---------------------------------------------------------------------------
@@ -389,11 +419,22 @@ def cmd_run(args) -> int:
     preview_paths: list[Path] = []
     if not errors and args.preview:
         try:
-            preview_paths = preview_mod.render(
+            result = preview_mod.render(
                 grid, previews_dir, view_list, ctx["config"].resolve_assets_dir()
             )
+            preview_paths = list(result)
         except Exception as e:  # noqa: BLE001 - clean message, no traceback
             raise CliError(f"preview render failed: {type(e).__name__}: {e}") from None
+        for name in result.info.get("fallback_blocks", []):
+            warnings.append(
+                {
+                    "message": (
+                        f"preview: '{name}' has no texture and rendered as "
+                        "a flat fallback color — its direction in the "
+                        "preview is not trustworthy"
+                    )
+                }
+            )
 
     if not errors:
         artifact_path, data_version, export_warnings = _export_artifact(
@@ -435,6 +476,7 @@ def cmd_run(args) -> int:
         views=views_array,
         run_dir=str(run_dir),
         artifacts=artifacts,
+        overwritten_placements=grid.overwrite_count,
     )
     try:
         report_mod.write_report(report, run_dir / "report.json")
@@ -445,12 +487,16 @@ def cmd_run(args) -> int:
 
     n_blocks = int(grid.count_non_air())
     dims = _dimensions(grid, arr)
-    print(f"run dir: {run_dir}")
-    print(
+    overwrites = grid.overwrite_count
+    summary = (
         f"  {n_blocks} blocks, {len(palette)} types, "
         f"dims {'x'.join(str(d) for d in dims)} — "
         f"{len(errors)} errors, {len(warnings)} warnings"
     )
+    if overwrites:
+        summary += f", {overwrites} placements overwritten"
+    print(f"run dir: {run_dir}")
+    print(summary)
     if preview_paths:
         print(f"  previews: {len(preview_paths)} in {previews_dir.name}/")
     if artifacts:

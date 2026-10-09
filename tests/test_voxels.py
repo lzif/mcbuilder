@@ -127,3 +127,29 @@ def test_non_int_coordinates_rejected():
     g = VoxelGrid()
     with pytest.raises(TypeError):
         g.place(1.5, 0, 0, "minecraft:stone", None)
+
+
+def test_to_dense_drops_phantom_palette_entries():
+    g = VoxelGrid()
+    g.place(0, 0, 0, "minecraft:stone", ("a.py", 1))
+    g.place(0, 0, 0, "minecraft:dirt", ("a.py", 2))  # stone fully overwritten
+    arr, palette, prov = g.to_dense()
+    assert palette == ["minecraft:dirt"]
+    assert arr[0, 0, 0] == 0
+    assert prov == {0: ("a.py", 2)}
+
+
+def test_overwrite_count_tracks_real_block_replacements():
+    g = VoxelGrid()
+    assert g.overwrite_count == 0
+    g.place(0, 0, 0, "minecraft:stone", None)
+    g.place(0, 0, 0, "minecraft:stone", None)  # same block: not counted
+    assert g.overwrite_count == 0
+    g.place(0, 0, 0, "minecraft:dirt", None)  # real -> different real
+    assert g.overwrite_count == 1
+    g.place(1, 0, 0, "minecraft:stone", None)
+    g.place(1, 0, 0, "minecraft:air", None)  # carving: not counted
+    assert g.overwrite_count == 1
+    g.place(2, 0, 0, "minecraft:air", None)
+    g.place(2, 0, 0, "minecraft:stone", None)  # air -> real: not counted
+    assert g.overwrite_count == 1

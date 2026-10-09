@@ -7,7 +7,7 @@ Schema::
                     "suggestions": [...], "at": "waystone.py:42"|null}],
       "warnings": [...],
       "block_counts": {"minecraft:stone": 12, ...},
-      "dimensions": [x, y, z] | null,          # post-crop bbox
+      "dimensions": {"x": x, "y": y, "z": z} | null,  # post-crop bbox
       "views":    [{"file": "az000_el025.png", "azimuth": 0.0,
                     "elevation": 25.0, "label": "az000_el025",
                     "directions_untrusted": true}],
@@ -44,15 +44,21 @@ def build_report(*, errors: list[dict], warnings: list[dict],
                  block_counts: dict[str, int],
                  dimensions: tuple[int, int, int] | None,
                  views: list[dict], run_dir: str,
-                 artifacts: list[dict] | None = None) -> dict:
+                 artifacts: list[dict] | None = None,
+                 overwritten_placements: int = 0) -> dict:
     """Assemble the report.json dict. Inputs are copied, never mutated."""
     return {
         "errors": [dict(e) for e in errors],
         "warnings": [dict(w) for w in warnings],
         "block_counts": dict(block_counts),
-        "dimensions": list(dimensions) if dimensions is not None else None,
+        "dimensions": (
+            {"x": dimensions[0], "y": dimensions[1], "z": dimensions[2]}
+            if dimensions is not None
+            else None
+        ),
         "views": [dict(v) for v in views],
         "artifacts": [dict(a) for a in artifacts] if artifacts else [],
+        "overwritten_placements": overwritten_placements,
         "run_dir": run_dir,
     }
 

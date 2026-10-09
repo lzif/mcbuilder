@@ -11,6 +11,8 @@ the parts make no other demands on ``build``.
 
 import pytest
 
+from mcbuilder.errors import McbuilderError
+
 from mcbuilder import parts
 
 
@@ -97,14 +99,14 @@ def test_stairs_run_width(direction, expected_xy_z):
 
 
 def test_stairs_run_invalid_direction():
-    with pytest.raises(ValueError, match="invalid direction"):
+    with pytest.raises(McbuilderError, match="invalid direction"):
         parts.stairs_run(FakeBuild(), (0, 0, 0), "up", 3, STAIR)
 
 
 def test_stairs_run_invalid_length_width():
-    with pytest.raises(ValueError, match="length"):
+    with pytest.raises(McbuilderError, match="length"):
         parts.stairs_run(FakeBuild(), (0, 0, 0), "north", 0, STAIR)
-    with pytest.raises(ValueError, match="width"):
+    with pytest.raises(McbuilderError, match="width"):
         parts.stairs_run(FakeBuild(), (0, 0, 0), "north", 3, STAIR, width=0)
 
 
@@ -121,7 +123,7 @@ def test_pillar_height_and_verbatim_block():
 
 
 def test_pillar_rejects_nonpositive_height():
-    with pytest.raises(ValueError, match="height"):
+    with pytest.raises(McbuilderError, match="height"):
         parts.pillar(FakeBuild(), (0, 0, 0), 0, "minecraft:stone")
 
 
@@ -148,12 +150,12 @@ def test_railing_single_point():
 
 
 def test_railing_y_mismatch_names_problem():
-    with pytest.raises(ValueError, match="same y level"):
+    with pytest.raises(McbuilderError, match="same y level"):
         parts.railing(FakeBuild(), (0, 64, 0), (4, 65, 0), "minecraft:oak_fence")
 
 
 def test_railing_diagonal_names_problem():
-    with pytest.raises(ValueError, match="axis-aligned"):
+    with pytest.raises(McbuilderError, match="axis-aligned"):
         parts.railing(FakeBuild(), (0, 64, 0), (4, 64, 3), "minecraft:oak_fence")
 
 

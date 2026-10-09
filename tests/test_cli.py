@@ -255,7 +255,7 @@ def test_run_creates_run001_with_report(tmp_path, capsys):
         "minecraft:stone": 18,
         "minecraft:oak_planks": 1,
     }
-    assert report["dimensions"] == [3, 3, 3]
+    assert report["dimensions"] == {"x": 3, "y": 3, "z": 3}
     assert report["views"] == []
     assert report["run_dir"] == str(run)
     # the .nbt deploy artifact is written and recorded in report.json
@@ -401,3 +401,81 @@ def test_assets_fetch_failure_is_clean_error(tmp_path, capsys, monkeypatch):
     out, err = capsys.readouterr()
     assert "assets fetch failed" in err
     assert "Traceback" not in out + err
+
+
+# ---------------------------------------------------------------------------
+# roast fixes (round 1)
+# ---------------------------------------------------------------------------
+
+RIDGE_SCRIPT = """\
+import mcbuilder as mb
+
+BUILD = mb.Build(seed=1)
+with BUILD:
+    BUILD.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", ridge="y")
+"""
+
+PHANTOM_SCRIPT = """\
+import mcbuilder as mb
+
+BUILD = mb.Build(seed=1)
+with BUILD:
+    BUILD.set(0, 0, 0, "minecraft:oak_log_typo")
+    BUILD.set(0, 0, 0, "minecraft:stone")
+"""
+
+OVERWRITE_SCRIPT = """\
+import mcbuilder as mb
+
+BUILD = mb.Build(seed=1)
+with BUILD:
+    BUILD.set(0, 0, 0, "minecraft:oak_planks")
+    BUILD.set(0, 0, 0, "minecraft:stone")
+"""
+
+
+def test_dsl_misuse_error_carries_script_line(tmp_path, capsys):
+    script = _write(tmp_path, "ridge.py", RIDGE_SCRIPT)
+    _with_config(tmp_path)
+    assert main(["check", str(script)]) == 1
+    out, err = capsys.readouterr()
+    assert "ridge must be 'x' or 'z'" in err
+    # the responsible DSL call, not a library frame
+    assert "ridge.py:5" in err
+    assert "Traceback" not in out + err
+
+
+def test_phantom_palette_entries_not_validated(tmp_path, capsys):
+    script = _write(tmp_path, "phantom.py", PHANTOM_SCRIPT)
+    _with_config(tmp_path)
+    assert main(["check", str(script)]) == 0
+    out, err = capsys.readouterr()
+    assert "0 errors" in out
+    assert "oak_log_typo" not in out + err
+
+
+def test_run_reports_fallback_blocks_as_warnings(tmp_path, monkeypatch):
+    script = _write(tmp_path, "hut.py", VALID_SCRIPT)
+    _with_config(tmp_path)
+    # Force missing textures: the real ~/.cache may hold fetched assets.
+    empty = tmp_path / "no-assets"
+    empty.mkdir()
+    monkeypatch.setattr(
+        "mcbuilder.config.McbuildConfig.resolve_assets_dir", lambda self: empty
+    )
+    out_dir = tmp_path / "dist"
+    assert main(["run", str(script), "--out", str(out_dir), "--preview"]) == 0
+    report = json.loads((out_dir / "run-001" / "report.json").read_text())
+    msgs = [w["message"] for w in report["warnings"]]
+    assert any("minecraft:stone" in m and "fallback" in m for m in msgs)
+
+
+def test_run_reports_overwritten_placements(tmp_path, capsys):
+    script = _write(tmp_path, "ow.py", OVERWRITE_SCRIPT)
+    _with_config(tmp_path)
+    out_dir = tmp_path / "dist"
+    assert main(["run", str(script), "--out", str(out_dir)]) == 0
+    report = json.loads((out_dir / "run-001" / "report.json").read_text())
+    assert report["overwritten_placements"] == 1
+    out, _ = capsys.readouterr()
+    assert "1 placements overwritten" in out
