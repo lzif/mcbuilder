@@ -68,7 +68,7 @@ def test_allowlisted_custom_block_passes_with_warning(registry):
     assert errors == []
     assert len(warnings) == 1
     assert warnings[0]["block"] == "lostqol:waystone{Owner:'Luki'}"
-    assert "unvalidated, paste at own risk" in warnings[0]["message"]
+    assert "unvalidated, build at own risk" in warnings[0]["message"]
 
 
 def test_custom_block_without_allowlist_is_error(registry):

@@ -284,3 +284,53 @@ def test_grid_property_exposes_voxel_grid():
     with b:
         with pytest.raises(GridBoundsError):
             b.set(20, 0, 0, "minecraft:stone")
+
+
+# -- review fixes (post-implement review round 1) ---------------------------
+
+
+def test_roof_gable_canonicalizes_nbt_keys():
+    """roof_gable must emit fully canonical palette keys (finding #1).
+
+    NBT top-level keys sorted, like Build.set produces — otherwise the
+    same blockstate lands in two palette entries and block_counts splits.
+    """
+    b = Build(seed=1)
+    with b:
+        b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs{z:1,a:2}", ridge="x")
+    _, palette, _ = b.grid.to_dense()
+    assert any("{a:2,z:1}" in p for p in palette)
+    assert not any("{z:1,a:2}" in p for p in palette)
+
+
+def test_set_views_bare_string_not_exploded():
+    """A bare string is one view spec, not a char list (finding #5)."""
+    b = Build(seed=1)
+    b.set_views("az045_el025;top")
+    assert b.views_config == ["az045_el025;top"]
+
+
+def test_render_enforces_36_view_cap(tmp_path):
+    """The harness path enforces the 36-view cap like the CLI (finding #2)."""
+    from mcbuilder.views import View, ViewError
+
+    b = Build(seed=1)
+    with b:
+        b.set(0, 0, 0, "minecraft:stone")
+    views = [View(azimuth=float(i % 360), elevation=25.0, label=f"v{i}") for i in range(40)]
+    with pytest.raises(ViewError):
+        b.render(tmp_path, views=views)
+
+
+def test_build_validate_uses_registry():
+    """Build.validate() runs registry validation over the palette (finding #4)."""
+    from mcbuilder.registry import Registry
+
+    reg = Registry({"minecraft:stone": {"properties": {}}}, version="test")
+    b = Build(seed=1)
+    with b:
+        b.set(0, 0, 0, "minecraft:stone")
+        b.set(1, 0, 0, "minecraft:nope_block")
+    errors, _warnings = b.validate(reg)
+    assert any("nope_block" in e["block"] for e in errors)
+    assert not any("minecraft:stone" in e["block"] for e in errors)

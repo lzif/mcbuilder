@@ -83,7 +83,9 @@ def _emit(name: str, props: dict[str, str], nbt: str | None) -> str:
         out += "[" + ",".join(f"{k}={props[k]}" for k in sorted(props)) + "]"
     if nbt:
         out += nbt
-    return out
+    # Full canonical form (props AND NBT keys sorted): identical blockstates
+    # must yield identical palette keys no matter which helper placed them.
+    return canonicalize(out)
 
 
 def _round_half_up(v: float) -> int:
@@ -325,19 +327,16 @@ class Build:
     def set_views(self, views) -> None:
         """Store view configuration. Pure config — no side effects.
 
-        Accepts a list of ``View`` objects or shorthand strings. The
-        ``mcbuilder.views`` module may not exist yet, so it is imported
-        lazily; when absent the raw config is stored as-is.
+        Stored raw (a list of ``View`` objects or shorthand strings) and
+        normalized downstream by the CLI / render harness. A bare string
+        is treated as a single spec, never exploded into characters.
         """
         if views is None:
             self._views_config = None
             return
-        try:
-            from mcbuilder.views import normalize_views
-        except ImportError:
-            self._views_config = list(views)
-        else:
-            self._views_config = normalize_views(views)
+        if isinstance(views, str):
+            views = [views]
+        self._views_config = list(views)
 
     @property
     def grid(self) -> VoxelGrid:
@@ -350,6 +349,17 @@ class Build:
     @property
     def views_config(self):
         return self._views_config
+
+    def validate(self, registry, allowlist=()) -> tuple[list[dict], list[dict]]:
+        """Validate this build's palette against a versioned registry.
+
+        The CLI calls this once per run; direct library/harness users call
+        it explicitly. It is deliberately NOT run implicitly at ``__exit__``:
+        leaving the batch scope cannot assume a registry is available.
+        Returns the ``(errors, warnings)`` pair from ``registry.validate``.
+        """
+        _, palette, _ = self._grid.to_dense()
+        return registry.validate(palette, allowlist=allowlist)
 
     def render(self, out_dir, views=None, assets_dir=None) -> list:
         """Render preview PNGs to ``out_dir``. Returns ordered ``list[Path]``.
@@ -378,4 +388,6 @@ class Build:
         views = list(views)
         if views and isinstance(views[0], str):
             return views_mod.parse_views(";".join(views))
-        return views
+        # Raw View objects: enforce the 36-view cap here (parse_views
+        # enforces it for string specs; the CLI enforces it at the end).
+        return views_mod._check_cap(views)
