@@ -15,12 +15,21 @@ def _floor(x, z):
 
 
 def _trapdoors() -> mb.Geometry:
+    """Skirting under the y=5 canopy edge: y=4, outward-facing, half=bottom.
+
+    For each pillar at (px,pz), place trapdoors on the two outward faces
+    (toward the 7x7 edge), at the non-pillar edge cells.
+    """
     g = mb.Geometry()
-    for px, pz in ((1, 1), (1, 5), (5, 1), (5, 5)):
-        g.set(px - 1, 3, pz, "minecraft:spruce_trapdoor[facing=west,half=bottom,open=false]")
-        g.set(px + 1, 3, pz, "minecraft:spruce_trapdoor[facing=east,half=bottom,open=false]")
-        g.set(px, 3, pz - 1, "minecraft:spruce_trapdoor[facing=north,half=bottom,open=false]")
-        g.set(px, 3, pz + 1, "minecraft:spruce_trapdoor[facing=south,half=bottom,open=false]")
+    # (pillar, outward dir, trapdoor pos, facing)
+    specs = [
+        ((1, 1), (0, 4, 1), "west"),  ((1, 1), (1, 4, 0), "north"),
+        ((1, 5), (0, 4, 5), "west"),  ((1, 5), (1, 4, 6), "south"),
+        ((5, 1), (6, 4, 1), "east"),  ((5, 1), (5, 4, 0), "north"),
+        ((5, 5), (6, 4, 5), "east"),  ((5, 5), (5, 4, 6), "south"),
+    ]
+    for _pillar, (x, y, z), facing in specs:
+        g.set(x, y, z, f"minecraft:spruce_trapdoor[facing={facing},half=bottom,open=false]")
     return g
 
 

@@ -41,7 +41,13 @@ with BUILD:
             plate_slab="minecraft:quartz_slab[type=bottom]",
             eave_stair="minecraft:prismarine_stairs",
             corner_block=QB,
-            cap_block="minecraft:prismarine_slab[type=bottom]",
+            cap_block="minecraft:prismarine_bricks",
         ),
         at=(0, 0, 0),
     )
+    # Overwrite y=6 cap: prismarine ring around quartz center (design top view).
+    for dx in range(3):
+        for dz in range(3):
+            x, z = 2 + dx, 2 + dz
+            block = QB if (dx, dz) == (1, 1) else "minecraft:prismarine_bricks"
+            BUILD.set(x, 6, z, block)

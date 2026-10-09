@@ -43,6 +43,7 @@ with BUILD:
         ),
         at=(0, 0, 0),
     )
-    chains = mb.part.pillar(height=3, block="minecraft:iron_chain[axis=y]")
+    chains = mb.part.pillar(height=2, block="minecraft:iron_chain[axis=y]")
     for cx, cz in ((2, 1), (4, 1), (2, 5), (4, 5)):
-        BUILD.place(chains, at=(cx, 2, cz))
+        BUILD.place(chains, at=(cx, 3, cz))
+        BUILD.set(cx, 2, cz, "minecraft:lantern[hanging=true]")

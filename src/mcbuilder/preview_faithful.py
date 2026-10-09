@@ -203,12 +203,29 @@ def _read_json(path: Path):
 
 
 def _load_texture_image(root: Path, rel: str, cache: dict):
-    """PIL RGB image for a texture path (cached). None when unloadable."""
+    """PIL RGB image for a texture path (cached). None when unloadable.
+
+    Animated textures (``.mcmeta`` with an ``animation`` section, e.g.
+    lantern/soul_lantern in 26.2) are cropped to the FIRST frame:
+    vanilla maps model UVs (0–16) to a single frame, not the full
+    vertically-stacked strip. Without this, UVs get stretched over all
+    frames and sample the wrong (usually darker) texels.
+    """
     if rel in cache:
         return cache[rel]
     try:
         with Image.open(root / "textures" / f"{rel}.png") as im:
             img = im.convert("RGB")
+        mcmeta = root / "textures" / f"{rel}.png.mcmeta"
+        if mcmeta.is_file():
+            try:
+                meta = json.loads(mcmeta.read_text(encoding="utf-8"))
+            except Exception:
+                meta = None
+            if isinstance(meta, dict) and isinstance(meta.get("animation"), dict):
+                w, h = img.size
+                if h > w and h % w == 0:
+                    img = img.crop((0, 0, w, w))
     except Exception:
         img = None
     cache[rel] = img
@@ -580,6 +597,16 @@ def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image):
     get their texture rotated 90°); the affine solve is exact for all
     convex quads.
     """
+    # Skip degenerate quads (edge-on to the camera, e.g. a zero-thickness
+    # bar seen side-on): the affine fit is ill-conditioned and the warp
+    # would smear black across the bounding box. A real rasterizer draws
+    # nothing for zero-area triangles.
+    _sx = [p[0] for p in pts_uv]
+    _sy = [p[1] for p in pts_uv]
+    _area2 = abs(sum(_sx[i] * _sy[(i + 1) % 4] - _sx[(i + 1) % 4] * _sy[i]
+                     for i in range(4)))
+    if _area2 < 2.0:  # < 1 px² screen-space area
+        return
     # Affine texture->screen: screen = M @ tex + t. Solve from the 4
     # (cyclic) correspondences, then invert for screen->texture.
     src = np.array([(tx, ty) for _, _, tx, ty in pts_uv], dtype=float)
@@ -599,14 +626,22 @@ def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image):
     bw, bh = x1 - x0, y1 - y0
     if bw < 1 or bh < 1:
         return
-    # Texels at the output-rect corners (UL, LL, LR, UR).
-    corners = np.array([[x0, y0], [x0, y1], [x1, y1], [x1, y0]])
-    data = (corners - t) @ Minv.T
-    quad_data = []
-    for tx, ty in data:
-        quad_data.extend((float(tx), float(ty)))
-    warped = tex.transform((bw, bh), Image.QUAD, tuple(quad_data),
-                           Image.NEAREST)
+    # AFFINE (not QUAD): the texture→screen map is affine by construction,
+    # and PIL's QUAD (perspective) solver goes numerically unstable on
+    # thin/axis-aligned quads — it smeared a black bowtie across the
+    # lantern cross-bars. We do the affine warp directly with numpy
+    # (PIL's AFFINE+NEAREST has the same bug on tiny textures):
+    # tex = Minv @ (screen - t), screen = (ox + x0, oy + y0).
+    a, b = float(Minv[0, 0]), float(Minv[0, 1])
+    c = float(Minv[0, 0] * (x0 - t1) + Minv[0, 1] * (y0 - t2))
+    d, e = float(Minv[1, 0]), float(Minv[1, 1])
+    f = float(Minv[1, 0] * (x0 - t1) + Minv[1, 1] * (y0 - t2))
+    tex_arr = np.array(tex)
+    th_arr, tw_arr = tex_arr.shape[0], tex_arr.shape[1]
+    _oy, _ox = np.mgrid[0:bh, 0:bw]
+    _tx = np.clip((a * _ox + b * _oy + c).astype(int), 0, tw_arr - 1)
+    _ty = np.clip((d * _ox + e * _oy + f).astype(int), 0, th_arr - 1)
+    warped = Image.fromarray(tex_arr[_ty, _tx].astype(np.uint8), "RGB")
     mask = Image.new("L", (bw, bh), 0)
     ImageDraw.Draw(mask).polygon(
         [(sx - x0, sy - y0) for sx, sy, _, _ in pts_uv], fill=255)

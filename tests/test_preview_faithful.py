@@ -437,3 +437,73 @@ def test_stair_tread_uv_painted_on_not_world_sorted():
     assert all(abs(a - b) < 1e-9 for a, b in
                zip((x, y, z), (1.0, 1.0, 0.5))), \
         f"(u0,v0) at {(x, y, z)}, want (1.0, 1.0, 0.5)"
+
+
+@needs_real_assets
+def test_animated_texture_uses_first_frame():
+    """Regression (Finding A): animated textures (lantern 16x48, 3 frames)
+    must map UVs to a single 16x16 frame, not the full strip.
+
+    The old code scaled v by th/16 = 3, sampling from the wrong frame
+    (darker texels) and stretching the texture 3x vertically.
+    """
+    tex_cache: dict = {}
+    img = pf._load_texture_image(_REAL_ROOT, "block/lantern", tex_cache)
+    assert img is not None
+    # 16x48 with .mcmeta animation -> cropped to 16x16 first frame
+    assert img.size == (16, 16), f"got {img.size}, want (16, 16)"
+
+
+def test_degenerate_quad_skipped():
+    """Regression (Finding A): zero-area screen quads (zero-thickness bars
+    viewed edge-on) must be skipped, not warped into black smears.
+
+    The old code fed degenerate quads to lstsq (which doesn't fail on
+    singular input), producing garbage affines that sampled outside the
+    texture -> solid black rectangles.
+    """
+    canvas = Image.new("RGB", (100, 100), (255, 255, 255))
+    tex = Image.new("RGB", (3, 2), (100, 100, 100))
+    # Degenerate: all four points on a vertical line (zero area)
+    pts_uv = [(50.0, 10.0, 0, 0), (50.0, 20.0, 0, 2),
+              (50.0, 20.0, 3, 2), (50.0, 10.0, 3, 0)]
+    pf._draw_textured_quad(canvas, pts_uv, tex)
+    # Canvas must be untouched (white) — the quad was skipped
+    arr = np.array(canvas)
+    assert (arr == 255).all(), "degenerate quad must not draw anything"
+
+
+@needs_real_assets
+def test_lantern_crossbars_no_black_smear():
+    """Regression (Finding A, isolated single-block render): the lantern's
+    zero-thickness cross-bars (elements 2-3, 45° rotated) must not render
+    as solid black boxes.
+
+    Renders minecraft:lantern in isolation and checks that the bar region
+    (top of the block) does not contain a large solid-black rectangle.
+    The vanilla texture has exactly one black texel; magnified it covers
+    only a small fraction of the bar.
+    """
+    from mcbuilder.build import Build
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as tmp:
+        with Build() as b:
+            b.set(0, 0, 0, "minecraft:lantern[hanging=false]")
+            paths = b.render(tmp, views=["az045_el015"],
+                             assets_dir=_REAL_ROOT.parent.parent,
+                             tier="faithful", presentation=False, title=None)
+        img = Image.open(paths[0]).convert("RGB")
+        a = np.array(img)
+        # Bar region: top ~15% of the non-background pixels
+        bg = a[0, 0]
+        mask = (a != bg).any(axis=2)
+        ys, xs = np.where(mask)
+        y0, y1 = ys.min(), ys.max()
+        h = y1 - y0
+        bar = a[y0:y0 + int(h * 0.25), xs.min():xs.max() + 1]
+        black = (bar.sum(axis=2) == 0)
+        black_frac = black.mean()
+        # The vanilla texture has 1 black texel out of 6 (16%); with the
+        # old PIL-QUAD bug the smear covered >40% of the bar region.
+        assert black_frac < 0.30, \
+            f"black smear covers {black_frac:.1%} of bar region"

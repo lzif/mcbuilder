@@ -12,6 +12,8 @@ BUILD = mb.Build(seed=202, views=VIEWS)
 def _floor(x, z):
     if (x, z) == (3, 3):
         return "minecraft:amethyst_block"
+    if (x, z) in ((0, 0), (0, 6), (6, 0), (6, 6)):
+        return "minecraft:amethyst_block"
     if x in (0, 6) or z in (0, 6):
         return "minecraft:blackstone"
     return "minecraft:deepslate_tiles"
@@ -46,7 +48,7 @@ with BUILD:
             plate_slab="minecraft:blackstone_slab[type=bottom]",
             eave_stair="minecraft:blackstone_stairs",
             corner_block="minecraft:blackstone",
-            cap_block="minecraft:deepslate_bricks",
+            cap_block="minecraft:amethyst_block",
         ),
         at=(0, 0, 0),
     )
