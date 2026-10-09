@@ -189,7 +189,7 @@ class Registry:
         - unknown name → error + did-you-mean (never silently rewritten);
         - illegal property name/value → error listing the legal values;
         - allowlisted custom (non-vanilla) name → pass with an
-          "unvalidated, unvalidated, build at own risk" warning;
+          "unvalidated, build at own risk" warning;
         - block-entity NBT is opaque: only brace balance is checked;
         - ``minecraft:air`` is always legal.
         """

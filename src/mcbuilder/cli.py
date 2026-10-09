@@ -35,7 +35,7 @@ from mcbuilder import report as report_mod
 from mcbuilder import views as views_mod
 
 DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "mcbuilder"
-MAX_VIEWS = 36
+MAX_VIEWS = views_mod.MAX_VIEWS
 
 
 class CliError(Exception):

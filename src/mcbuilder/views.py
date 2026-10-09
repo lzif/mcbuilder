@@ -74,7 +74,7 @@ def _orbit_views(n: int, elevation: float) -> list[View]:
     return views
 
 
-def _check_cap(views: list[View]) -> list[View]:
+def check_cap(views: list[View]) -> list[View]:
     if len(views) > MAX_VIEWS:
         raise ViewError(
             f"too many views ({len(views)} > {MAX_VIEWS}): an agent will "
@@ -136,7 +136,7 @@ def parse_views(spec: str) -> list[View]:
                 f"malformed view token {token!r} (empty): {_GRAMMAR_HELP}"
             )
         views.extend(_parse_token(token))
-    return _check_cap(views)
+    return check_cap(views)
 
 
 def default_views() -> list[View]:
@@ -152,7 +152,7 @@ def with_count(views: list[View], n: int) -> list[View]:
     if n <= 0:
         raise ValueError(f"count must be positive, got {n}")
     combined = list(views) + _orbit_views(n, 25.0)
-    return _check_cap(combined)
+    return check_cap(combined)
 
 
 __all__ = [

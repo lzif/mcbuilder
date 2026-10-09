@@ -390,4 +390,4 @@ class Build:
             return views_mod.parse_views(";".join(views))
         # Raw View objects: enforce the 36-view cap here (parse_views
         # enforces it for string specs; the CLI enforces it at the end).
-        return views_mod._check_cap(views)
+        return views_mod.check_cap(views)
