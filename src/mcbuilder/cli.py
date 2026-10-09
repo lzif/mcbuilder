@@ -28,6 +28,7 @@ from mcbuilder import assets as assets_mod
 from mcbuilder import build as build_mod
 from mcbuilder import config as config_mod
 from mcbuilder import errors as errors_mod
+from mcbuilder import export_nbt as export_nbt_mod
 from mcbuilder import preview as preview_mod
 from mcbuilder import registry as registry_mod
 from mcbuilder import report as report_mod
@@ -309,19 +310,32 @@ def _fmt_issue(issue) -> str:
 
 
 # ---------------------------------------------------------------------------
-# artifact export (deploy format TBD)
+# artifact export (.nbt serializer)
 # ---------------------------------------------------------------------------
 
-def _export_artifact(grid, run_dir: Path, stem: str):
-    """Write the deploy artifact for a validated build.
+def _export_artifact(
+    grid, run_dir: Path, stem: str, *, cfg, include_air: bool
+) -> tuple[Path, int, list[str]]:
+    """Write the vanilla structure-block ``.nbt`` deploy artifact.
 
-    TODO: deploy format is TBD — Lost SMP players are Bedrock-only, so neither
-    a Java schematic format nor Litematica applies. Candidates under
-    consideration: ``.mcstructure`` (via HoloPrint) or a mcbuilder-native
-    layer-by-layer build guide. The real exporter plugs in here once Luki
-    decides; everything else in the run pipeline is format-agnostic.
+    Returns ``(path, data_version, warnings)``. Raises :class:`CliError`
+    (clean message, no traceback) when the version's DataVersion can't be
+    resolved or the grid can't be exported.
     """
-    raise NotImplementedError("deploy format pending Luki's decision")
+    try:
+        data_version = export_nbt_mod.resolve_data_version(
+            cfg.mc_version, cfg.resolve_assets_dir()
+        )
+    except export_nbt_mod.ExportError as e:
+        raise CliError(str(e)) from None
+    out = run_dir / f"{stem}.nbt"
+    try:
+        warnings = export_nbt_mod.write_structure_nbt(
+            grid, out, data_version=data_version, include_air=include_air
+        )
+    except export_nbt_mod.ExportError as e:
+        raise CliError(str(e)) from None
+    return out, data_version, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -382,11 +396,23 @@ def cmd_run(args) -> int:
             raise CliError(f"preview render failed: {type(e).__name__}: {e}") from None
 
     if not errors:
+        artifact_path, data_version, export_warnings = _export_artifact(
+            grid, run_dir, stem, cfg=ctx["config"], include_air=args.include_air
+        )
+        warnings.extend({"message": w} for w in export_warnings)
         try:
-            _export_artifact(grid, run_dir, stem)
-        except NotImplementedError as e:
-            warnings.append({"message": f"artifact export skipped: {e}"})
-            print(f"mcbuild: note: {e} — no deploy artifact written", file=sys.stderr)
+            rel = artifact_path.relative_to(run_dir)
+        except ValueError:
+            rel = Path(artifact_path.name)
+        artifacts = [
+            {
+                "file": str(rel),
+                "format": "nbt",
+                "data_version": data_version,
+            }
+        ]
+    else:
+        artifacts = []
 
     views_array = []
     for view, p in zip(view_list, preview_paths):
@@ -408,6 +434,7 @@ def cmd_run(args) -> int:
         dimensions=_dimensions(grid, arr),
         views=views_array,
         run_dir=str(run_dir),
+        artifacts=artifacts,
     )
     try:
         report_mod.write_report(report, run_dir / "report.json")
@@ -426,6 +453,9 @@ def cmd_run(args) -> int:
     )
     if preview_paths:
         print(f"  previews: {len(preview_paths)} in {previews_dir.name}/")
+    if artifacts:
+        a = artifacts[0]
+        print(f"  artifact: {a['file']} ({a['format']}, DataVersion {a['data_version']})")
     for e in errors:
         print(f"  error: {_fmt_issue(e)}")
     for w in warnings:

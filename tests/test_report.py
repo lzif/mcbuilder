@@ -23,8 +23,9 @@ def test_schema_keys():
     )
     assert set(report.keys()) == {
         "errors", "warnings", "block_counts",
-        "dimensions", "views", "run_dir",
+        "dimensions", "views", "artifacts", "run_dir",
     }
+    assert report["artifacts"] == []
     assert report["dimensions"] == [9, 8, 9]
     assert report["run_dir"] == "dist/run-003"
 

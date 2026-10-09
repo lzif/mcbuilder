@@ -144,6 +144,27 @@ def test_fetch_26_2_falls_back_to_26_1_layout(tmp_path, monkeypatch):
     assert not (client / "assets/minecraft/textures/item/stick.png").exists()
 
 
+def test_fetch_extracts_version_json_when_present(tmp_path, monkeypatch):
+    # The jar root's version.json carries the authoritative DataVersion
+    # ("world_version"); the .nbt exporter prefers it over its table.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("assets/minecraft/blockstates/stone.json", b'{"variants":{}}')
+        zf.writestr("version.json", json.dumps({"world_version": 4903}).encode())
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(buf.getvalue()))
+
+    dest = fetch("26.2", tmp_path)
+    payload = json.loads((dest / "version.json").read_text(encoding="utf-8"))
+    assert payload["world_version"] == 4903
+
+
+def test_fetch_tolerates_jar_without_version_json(tmp_path, monkeypatch):
+    # make_fake_jar() has no version.json — extraction must not fail.
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(make_fake_jar()))
+    dest = fetch("26.2", tmp_path)
+    assert not (dest / "version.json").exists()
+
+
 def test_fetch_is_idempotent(tmp_path, monkeypatch):
     jar_bytes = make_fake_jar()
     monkeypatch.setattr(assets, "_http_get", fake_http_factory(jar_bytes))

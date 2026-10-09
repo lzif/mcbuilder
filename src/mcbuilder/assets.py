@@ -238,6 +238,11 @@ def _fetch_client(version: str, dest: Path) -> None:
                     "asset paths (textures/block, models/block, blockstates)."
                 )
             _safe_extract(zf, members, client_dir)
+            # The jar root's version.json carries the authoritative
+            # DataVersion ("world_version"); the .nbt exporter prefers it
+            # over its fallback table. Tolerate jars without it.
+            if "version.json" in zf.namelist():
+                _safe_extract(zf, ["version.json"], dest)
     except zipfile.BadZipFile as exc:
         raise AssetError(
             f"downloaded client jar for {version!r} is not a valid zip: {exc}"
@@ -247,10 +252,11 @@ def _fetch_client(version: str, dest: Path) -> None:
 def fetch(version: str, cache_dir: Path) -> Path:
     """Download assets for ``version`` into ``<cache_dir>/<version>/``.
 
-    Writes ``minecraft-data.json`` (normalized block registry) and
-    ``client/`` (vanilla textures, block models, blockstates extracted from
-    the client JAR). Skips anything already present. Returns the version
-    directory. Raises ``AssetError`` on failure.
+    Writes ``minecraft-data.json`` (normalized block registry),
+    ``version.json`` (client jar metadata incl. the authoritative
+    DataVersion), and ``client/`` (vanilla textures, block models,
+    blockstates extracted from the client JAR). Skips anything already
+    present. Returns the version directory. Raises ``AssetError`` on failure.
     """
     dest = Path(cache_dir) / version
     dest.mkdir(parents=True, exist_ok=True)

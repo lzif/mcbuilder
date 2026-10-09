@@ -258,8 +258,12 @@ def test_run_creates_run001_with_report(tmp_path, capsys):
     assert report["dimensions"] == [3, 3, 3]
     assert report["views"] == []
     assert report["run_dir"] == str(run)
-    # deploy format TBD: no artifact, but a clear warning instead of a crash
-    assert any("deploy format pending" in str(w) for w in report["warnings"])
+    # the .nbt deploy artifact is written and recorded in report.json
+    assert (run / "hut.nbt").is_file()
+    assert report["artifacts"] == [
+        {"file": "hut.nbt", "format": "nbt", "data_version": 4189}
+    ]
+    assert not any("deploy format pending" in str(w) for w in report["warnings"])
 
     out, err = capsys.readouterr()
     assert "run-001" in out
@@ -352,11 +356,28 @@ def test_run_invalid_views_is_clean_error(tmp_path, capsys):
     assert not (out_dir / "run-001").exists()
 
 
-def test_export_artifact_raises_not_implemented():
-    # Deploy format is TBD (Bedrock-only players): the export call is isolated
-    # here so the real exporter plugs in later.
-    with pytest.raises(NotImplementedError, match="deploy format pending"):
-        cli._export_artifact(None, Path("."), "hut")
+def test_export_artifact_writes_nbt(tmp_path):
+    # _export_artifact writes the vanilla structure .nbt and reports the
+    # DataVersion it resolved (table fallback: no version.json in cache).
+    import nbtlib
+
+    from mcbuilder import build as build_mod
+    from mcbuilder import config as config_mod
+
+    b = build_mod.Build(seed=7)
+    with b:
+        b.box((0, 0, 0), (1, 0, 1), "minecraft:stone")
+    cfg = config_mod.McbuildConfig(mc_version="1.21.4")
+    path, data_version, warnings = cli._export_artifact(
+        b.grid, tmp_path, "hut", cfg=cfg, include_air=False
+    )
+    assert path == tmp_path / "hut.nbt"
+    assert data_version == 4189
+    assert warnings == []
+    f = nbtlib.load(str(path), gzipped=True)
+    assert int(f["DataVersion"]) == 4189
+    assert [int(v) for v in f["size"]] == [2, 1, 2]
+    assert len(list(f["blocks"])) == 4
 
 
 # ---------------------------------------------------------------------------

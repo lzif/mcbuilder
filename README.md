@@ -9,11 +9,11 @@ against the real block registry → renders labeled preview images from
 customizable angles → the agent iterates on what it sees. `report.json`'s
 `block_counts` is your survival material shopping list.
 
-> **Deploy format: TBD.** The deploy artifact (the file you actually build
-> from in-game) is still being decided — `.mcstructure`, `.litematic`,
-> `.schem`, and a mcbuilder-native layer-by-layer build guide are all on
-> the table. Everything else — the DSL, validator, parts catalog, preview
-> renderer, and CLI — is format-agnostic and works today.
+> **Deploy artifact: `.nbt`.** `mcbuild run` writes a vanilla structure-block
+> `.nbt` (gzipped NBT) next to `report.json` — the same shape a structure
+> block saves, readable by LostQoL's structure parser. More serializers
+> (`.mcstructure`, `.schem`, ...) plug in as swappable exporters; the DSL,
+> validator, parts catalog, preview renderer, and CLI are format-agnostic.
 
 ## Install
 

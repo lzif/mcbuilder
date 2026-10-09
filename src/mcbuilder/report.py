@@ -43,7 +43,8 @@ def view_entry(*, file: str, view, directions_untrusted: bool = True) -> dict:
 def build_report(*, errors: list[dict], warnings: list[dict],
                  block_counts: dict[str, int],
                  dimensions: tuple[int, int, int] | None,
-                 views: list[dict], run_dir: str) -> dict:
+                 views: list[dict], run_dir: str,
+                 artifacts: list[dict] | None = None) -> dict:
     """Assemble the report.json dict. Inputs are copied, never mutated."""
     return {
         "errors": [dict(e) for e in errors],
@@ -51,6 +52,7 @@ def build_report(*, errors: list[dict], warnings: list[dict],
         "block_counts": dict(block_counts),
         "dimensions": list(dimensions) if dimensions is not None else None,
         "views": [dict(v) for v in views],
+        "artifacts": [dict(a) for a in artifacts] if artifacts else [],
         "run_dir": run_dir,
     }
 
