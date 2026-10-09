@@ -56,7 +56,8 @@ labeled view list), and `previews/` PNGs.
 
 The agent does composition and proportion; the parts own the geometry
 math. Every part is called as `mb.parts.<name>(BUILD, ...)` inside the
-`with BUILD:` block.
+`with BUILD:` block — or via the `BUILD.<name>(...)` delegates
+(`BUILD.stairs_run(...)`, `BUILD.pillar(...)`, `BUILD.railing(...)`).
 
 | Part | Signature | Facing rule |
 |---|---|---|
