@@ -334,3 +334,72 @@ def test_build_validate_uses_registry():
     errors, _warnings = b.validate(reg)
     assert any("nope_block" in e["block"] for e in errors)
     assert not any("minecraft:stone" in e["block"] for e in errors)
+
+
+# -- one-shot helpers return the placed Geometry ---------------------------
+
+
+def test_one_shot_helpers_return_placed_geometry():
+    """DX finding #5: BUILD one-shots return the Geometry they placed.
+
+    The returned geometry uses absolute coordinates, so ``.bounds()``
+    reports the exact footprint — no guessing helper output sizes.
+    """
+    import mcbuilder as mb
+    from mcbuilder.geometry import Geometry
+
+    b = Build(seed=1)
+    with b:
+        g_box = b.box((0, 0, 0), (4, 2, 3), "minecraft:stone")
+        g_walls = b.walls((10, 0, 0), (12, 1, 2), "minecraft:stone")
+        g_floor = b.floor((20, 5, 0), (22, 9, 2), "minecraft:stone")
+        g_roof = b.roof_gable((0, 10, 0), (6, 10, 4), "minecraft:oak_stairs", "x")
+        g_stairs = b.stairs_run((0, 20, 0), "east", 3, "minecraft:oak_stairs")
+        g_pillar = b.pillar((0, 30, 0), 4, "minecraft:oak_log")
+        g_rail = b.railing((0, 40, 0), (0, 40, 3), "minecraft:oak_fence")
+        src = mb.part.pillar(height=2, block="minecraft:stone")
+        g_place = b.place(src, at=(5, 50, 5))
+
+    for g in (g_box, g_walls, g_floor, g_roof, g_stairs, g_pillar, g_rail):
+        assert isinstance(g, Geometry)
+        assert len(g) > 0
+    assert g_place is src  # place() echoes the stamped geometry
+
+    assert g_box.bounds() == ((0, 0, 0), (4, 2, 3))
+    assert len(g_box) == 5 * 3 * 4
+    assert g_walls.bounds() == ((10, 0, 0), (12, 1, 2))
+    assert len(g_walls) == 2 * 2 * 3 + 2 * 1 * 2  # x-walls + z-walls, no floor/ceiling
+    assert g_floor.bounds() == ((20, 5, 0), (22, 5, 2))  # 1 thick at min y
+    assert len(g_floor) == 3 * 3
+    # roof: 5-deep span -> ceil(5/2) = 3 above the eaves
+    assert g_roof.bounds() == ((0, 10, 0), (6, 12, 4))
+    assert len(g_roof) == 2 * 2 * 7 + 7  # two row-pairs + ridge row
+    # stairs ascend east: facing west (opposite), 1 rise per step
+    assert g_stairs.bounds() == ((0, 20, 0), (2, 22, 0))
+    assert len(g_stairs) == 3
+    assert g_pillar.bounds() == ((0, 30, 0), (0, 33, 0))
+    assert len(g_pillar) == 4
+    assert g_rail.bounds() == ((0, 40, 0), (0, 40, 3))
+    assert len(g_rail) == 4
+
+
+def test_returned_geometry_matches_grid_placement():
+    """Every cell of the returned Geometry is actually in the grid."""
+    b = Build(seed=1)
+    with b:
+        roof = b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "x")
+    arr, palette, _ = b.grid.to_dense()
+    for dx, dy, dz, canonical in roof.cells():
+        assert palette[arr[dx, dy, dz]] == canonical
+    assert b.grid.count_non_air() == len(roof)
+
+
+def test_one_shots_still_require_batch_scope():
+    """Returning Geometry doesn't bypass the `with BUILD:` rule."""
+    import pytest
+
+    b = Build()
+    with pytest.raises(BuildError, match=r"placements must be inside"):
+        b.box((0, 0, 0), (1, 1, 1), "minecraft:stone")
+    with pytest.raises(BuildError, match=r"placements must be inside"):
+        b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs", "x")

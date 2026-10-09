@@ -220,7 +220,7 @@ def test_check_creates_no_run_dir(tmp_path):
 
 
 def test_check_without_config_uses_defaults(tmp_path, capsys):
-    # No mcbuild.toml anywhere: default config (mc_version 1.21.4) applies.
+    # No mcbuild.toml anywhere: default config (mc_version 26.2) applies.
     script = _write(tmp_path, "hut.py", VALID_SCRIPT)
     assert main(["check", str(script)]) == 0
     out, err = capsys.readouterr()

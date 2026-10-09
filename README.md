@@ -28,7 +28,7 @@ Python 3.10+.
 ## Quick start
 
 ```bash
-mcbuild assets fetch --version 1.21.4   # one-time: registry + vanilla textures
+mcbuild assets fetch --version 26.2   # one-time: registry + vanilla textures
 ```
 
 ```python
@@ -115,6 +115,16 @@ Core DSL methods on `BUILD`: `set(x, y, z, block)`, `box(c1, c2, block)`,
 `walls(c1, c2, block)`, `floor(c1, c2, block)`. Block strings are canonical
 `minecraft:name[prop=val,...]{nbt}` — property order never matters.
 
+**Partial properties are legal and take vanilla defaults.** You may write
+`minecraft:oak_log[axis=y]` and omit `waterlogged`, or
+`minecraft:oak_leaves[persistent=true]` and omit `distance` — validation
+only checks the properties you write (each must be a legal name/value for
+that block), never the ones you skip. mcbuilder does not fill anything in:
+the `.nbt` palette carries exactly the properties you specified, and
+Minecraft resolves the rest to defaults at paste time (previews use the
+same defaults). When the default matters to your build — `waterlogged`,
+`hanging`, `facing` — write the property explicitly.
+
 ## Block versions
 
 `mcbuild assets fetch --version <x.y.z>` downloads the block registry and
@@ -123,7 +133,7 @@ Mojang assets are never bundled with this package — they are fetched at
 user time. Pin the version per project in `mcbuild.toml`:
 
 ```toml
-mc_version = "1.21.4"
+mc_version = "26.2"
 max_dimensions = [256, 256, 256]
 allowlist = ["mymod:custom_block"]
 ```

@@ -39,7 +39,57 @@ allowlist = ["lostqol:waystone"]
 # assets_dir = "/custom/cache"   # optional; default ~/.cache/mcbuilder/<mc_version>/
 ```
 
-## 2. Core concepts
+## 2. Five-minute house — just build something
+
+Skip the architecture chapter for now. This is the whole loop:
+write direct calls, `check`, `run --preview`, look at the pictures,
+tweak, repeat. No factories, no shared modules — one asymmetric,
+one-off build:
+
+```python
+# house.py
+import mcbuilder as mb
+
+BUILD = mb.Build(seed=1)
+
+with BUILD:
+    # floor + walls: 7 x 5 footprint, walls 3 high
+    BUILD.floor((0, 0, 0), (6, 0, 4), "minecraft:cobblestone")
+    BUILD.walls((0, 1, 0), (6, 3, 4), "minecraft:oak_planks")
+
+    # doorway (north wall) + window (south wall): carve with air, hang the door
+    BUILD.box((3, 1, 0), (3, 2, 0), "minecraft:air")
+    BUILD.box((1, 2, 4), (2, 2, 4), "minecraft:air")
+    BUILD.set(3, 1, 0, "minecraft:oak_door[facing=north,half=lower,hinge=left]")
+    BUILD.set(3, 2, 0, "minecraft:oak_door[facing=north,half=upper,hinge=left]")
+
+    # gable roof: ridge along x, 1-block overhang, eaves at y=4.
+    # Span is 7 deep (z -1..5), so it rises ceil(7/2) = 4 above the eaves.
+    roof = BUILD.roof_gable(
+        (-1, 4, -1), (7, 4, 5), "minecraft:spruce_stairs", ridge="x"
+    )
+
+    # chimney sized from the roof's ACTUAL peak — no guessing, no source-diving:
+    (_, _, _), (_, peak, _) = roof.bounds()
+    BUILD.box((5, peak - 1, 1), (5, peak + 2, 1), "minecraft:cobblestone")
+```
+
+```bash
+mcbuild check house.py
+# house.py — OK (159 blocks, 7 types, 0 errors, 0 warnings)
+
+mcbuild run house.py --preview
+# previews land in run-001/previews*/ — look, tweak the numbers, re-run.
+```
+
+Two things to notice: `BUILD.roof_gable(...)` **returns the `Geometry`
+it placed**, so `roof.bounds()` tells you the real peak instead of you
+computing `ceil(span/2)` by hand (§3's dimensions table lists every
+helper's output size). And the loop is the whole workflow — the waystone
+factory pattern in §4 exists for *repeated* stamping; for a one-off
+build, direct calls win.
+
+## 3. Core concepts
 
 ### `Build` — the accumulator
 
@@ -59,7 +109,7 @@ with BUILD:
 - `seed` — the **sole** RNG source, exposed as `BUILD.rng()`. Same
   script + same seed ⇒ same grid. The CLI also pins `PYTHONHASHSEED`,
   and warns if your script imports raw `random` / `numpy.random`.
-- `views` — preview camera config (see §5). Pure config, no side effects.
+- `views` — preview camera config (see §6). Pure config, no side effects.
 - `max_dimensions` — grid bounds; exceeding them raises `GridBoundsError`.
 - Provenance — every palette entry records the `file:line` of the
   script call that placed it (first placement wins). Validation
@@ -104,12 +154,40 @@ datablock layer (`mb.parts.stairs_run(BUILD, ...)` ≡
 `BUILD.place(mb.part.stairs_run(...), at=start)`). Use factories
 directly when you stamp something more than once.
 
+Every one-shot helper **returns the `Geometry` it placed** (absolute
+coordinates), so `geo.bounds()` tells you exactly what landed — size
+the next piece around it instead of guessing:
+
+```python
+roof = BUILD.roof_gable((0, 5, 0), (6, 5, 4), "minecraft:spruce_stairs", ridge="x")
+(_, _, _), (_, peak, _) = roof.bounds()
+BUILD.box((3, peak - 1, 2), (3, peak + 2, 2), "minecraft:cobblestone")  # chimney through the roof
+```
+
 | Part | Factory signature | One-shot |
 |---|---|---|
 | `stairs_run` | `mb.part.stairs_run(*, direction, length, block, width=1)` | `mb.parts.stairs_run(BUILD, start, direction, length, block, width=1)` / `BUILD.stairs_run(start, direction, length, block, width=1)` |
 | `pillar` | `mb.part.pillar(*, height, block)` | `BUILD.pillar(base, height, block)` |
 | `railing` | `mb.part.railing(*, start, end, block)` | `BUILD.railing(start, end, block)` |
 | `box` | `mb.part.box(*, c1, c2, block)` | `BUILD.box(c1, c2, block)` |
+
+### Output bounds — how big is the thing you just placed?
+
+No helper is a black box. Every entry below is verified against the
+implementation; `geo.bounds()` on the returned `Geometry` reports the
+same numbers at runtime.
+
+| Helper | Footprint | Height / extent |
+|---|---|---|
+| `BUILD.box(c1, c2, block)` | XZ rectangle of the corners | `\|dx\|+1` × `\|dy\|+1` × `\|dz\|+1` cells, corners inclusive |
+| `BUILD.walls(c1, c2, block)` | same XZ as `box` | four vertical walls over the full Y range; **no** floor, **no** ceiling |
+| `BUILD.floor(c1, c2, block)` | XZ rectangle of the corners | 1 thick, at `min(c1.y, c2.y)` |
+| `BUILD.roof_gable(c1, c2, block, ridge)` | XZ rectangle of the corners | rises `ceil(span/2)` above the eave height (`min(c1.y, c2.y)`), where `span` is the footprint extent **perpendicular** to the ridge (Z extent for `ridge="x"`, X extent for `ridge="z"`). 5-deep ⇒ 3 tall; 6-deep ⇒ 3 tall, no ridge row |
+| `BUILD.stairs_run(start, direction, length, block, width=1)` | `length` steps toward `direction` × `width` wide (perpendicular, positive side) | step `i` at `start_y + i`: total rise = `length` |
+| `BUILD.pillar(base, height, block)` | 1 × 1 at `base` | `height` blocks up from `base.y` |
+| `BUILD.railing(start, end, block)` | straight run `start` → `end`, inclusive, axis-aligned | 1 thick |
+| `BUILD.place(geo, at=(x,y,z))` | `geo`'s cells shifted by `at` | — |
+| `BUILD.set(x, y, z, block)` | one block | — (returns `None`; the primitive, not a helper) |
 
 ### Layering law
 
@@ -122,7 +200,7 @@ mb.parts.*               one-shot sugar over place()           (op layer)
 your script              the modifier stack (re-run = re-evaluate)
 ```
 
-## 3. Authoring walkthrough
+## 4. Authoring walkthrough
 
 A tiny stone hut, start to finish. Save as `hut.py`:
 
@@ -162,7 +240,7 @@ mcbuild run hut.py --out dist/ --preview
 #   previews: 2 in previews/
 #   trusted previews: 2 in previews_trusted/
 #   faithful previews: 2 in previews_faithful/
-#   artifact: hut.nbt (nbt, DataVersion 4189)
+#   artifact: hut.nbt (nbt, DataVersion 4903)
 ```
 
 Each run gets an auto-versioned directory (`run-001`, `run-002`, …)
@@ -174,7 +252,7 @@ floors, canopy, per-variant palettes — see
 [`examples/waystones/`](../examples/waystones/) (four 7×7×7 waystone
 variants authored as ~50-line scripts over a common factory module).
 
-## 4. Blockstate syntax and direction rules
+## 5. Blockstate syntax and direction rules
 
 Block strings are canonical `minecraft:name[prop=val,...]{nbt}`:
 
@@ -189,6 +267,19 @@ with top-level keys sorted. Property order never matters:
 `[half=bottom,facing=north]` and `[facing=north,half=bottom]` are the
 same palette entry. Malformed strings raise `ValueError` immediately
 (empty name, unclosed brackets, duplicate keys, unbalanced NBT).
+
+**Partial properties are legal — omitted props take vanilla defaults.**
+`minecraft:oak_log[axis=y]` (no `waterlogged`) and
+`minecraft:oak_leaves[persistent=true]` (no `distance`) both validate:
+`mcbuild check` only verifies the properties you wrote, each against the
+block's legal name/value list. mcbuilder never fills in the rest — the
+`.nbt` palette entry carries exactly your properties, and Minecraft
+resolves the missing ones to defaults when the structure is pasted. The
+preview renderers assume the same defaults when matching models
+(`facing=north`, `half=bottom`, `shape=straight`, `type=bottom`,
+`axis=y`, `hanging=false`, `waterlogged=false`, `open=false`). Rule of
+thumb: when the default is load-bearing for your build, write the
+property explicitly.
 
 **Direction convention: no silent inference.** `set`, `box`, `walls`,
 `floor`, and `pillar` place your block string **verbatim** — no axis or
@@ -223,7 +314,7 @@ n→e→s→w per 90° clockwise, `axis` swaps x/z on 90° turns, sign/banner
 friends are invariant. A design verified here pastes correctly at all
 four rotations.
 
-## 5. Views
+## 6. Views
 
 One grammar, semicolons only:
 
@@ -245,7 +336,7 @@ N-view orbit at el25. Hard cap: **36 views** per render set.
 mcbuild run hut.py --preview --views "iso;az000_el025;az180_el025;top"
 ```
 
-## 6. The three preview tiers
+## 7. The three preview tiers
 
 `mcbuild run --preview` renders every resolved view in **three** tiers
 into the run dir. Pick the tier for the question you're asking:
@@ -281,7 +372,7 @@ compare against reference screenshots.
 Rule of thumb: iterate on **fast**, verify directions on **trusted**,
 sign off on **faithful**.
 
-## 7. CLI reference
+## 8. CLI reference
 
 ```bash
 mcbuild check <script> [--config PATH]
@@ -313,7 +404,7 @@ Written to every run dir:
 | `overwritten_placements` | how many placements overwrote an earlier one (last-write-wins count) |
 | `run_dir` | the run directory itself |
 
-## 8. `.nbt` export → LostQoL pipeline
+## 9. `.nbt` export → LostQoL pipeline
 
 `mcbuild run` writes `<name>.nbt` next to `report.json`: a vanilla
 structure-block file (gzipped NBT with `DataVersion`, `size`,
@@ -356,7 +447,7 @@ into the `.nbt` **verbatim**. From `examples/waystones/common.py`:
 That is a plugin-side contract — mcbuilder's job ends at writing the
 string through untouched.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 **`mcbuild: error: placements must be inside 'with BUILD:'`**
 Every placement call (`set`, `box`, `place`, parts, …) must run inside
@@ -376,7 +467,7 @@ error if you hand a `facing` to a part that computes it.
 **`railing: run must be axis-aligned`** — start/end must share y and
 have x or z constant.
 
-**Allowlist warning for `lostqol:waystone`** — expected (see §8). Any
+**Allowlist warning for `lostqol:waystone`** — expected (see §9). Any
 *other* allowlist warning means a non-vanilla block is flowing into
 your `.nbt`: make sure that's intentional.
 
@@ -399,7 +490,7 @@ Use the seeded `BUILD.rng()`.
 
 **My preview looks wrong.** Checklist, in order:
 1. `mcbuild check` — 0 errors? (Errors block export *and* previews.)
-2. Am I reading the right tier? (fast ≠ directions; see §6.)
+2. Am I reading the right tier? (fast ≠ directions; see §7.)
 3. `report.json` warnings — fallback textures / untrusted blocks?
 4. Blockstate strings — did I hand-write a `facing` that fights the
    helper's computed one? (`roof_gable`/`stairs_run` own their facing.)
@@ -407,7 +498,7 @@ Use the seeded `BUILD.rng()`.
    tier: if they disagree on an orientation, that's a renderer bug —
    report it with the script and the two PNGs.
 
-## 10. FAQ
+## 11. FAQ
 
 **Do I need the Minecraft client / a server to use this?**
 No. `mcbuild assets fetch` downloads everything (registry + vanilla
@@ -420,12 +511,12 @@ that pin. Lost SMP runs Paper 26.2 (DataVersion 4903).
 
 **Can I use non-vanilla blocks?**
 Yes via `allowlist` in `mcbuild.toml` — they pass validation with a
-warning and are written into the `.nbt` verbatim (see §8). The plugin
+warning and are written into the `.nbt` verbatim (see §9). The plugin
 must know what to do with them.
 
 **How do rotations work?**
 `mcbuilder.rotation` mirrors the server-side paster exactly
-(§4). Design facing-north; pasting at 90°/180°/270° just works.
+(§5). Design facing-north; pasting at 90°/180°/270° just works.
 
 **Why do fences look unconnected in previews?**
 Fence/wall connections are runtime state resolved by the game at

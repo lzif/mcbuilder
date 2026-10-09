@@ -22,8 +22,23 @@ Direction vocabulary: ``direction`` params use "north"/"south"/"east"/
 from __future__ import annotations
 
 from mcbuilder import part as _part
+from mcbuilder.geometry import Geometry
 
 __all__ = ["stairs_run", "pillar", "railing"]
+
+
+def _at_absolute(geo: Geometry, at: tuple[int, int, int]) -> Geometry:
+    """Copy of ``geo`` with cells shifted into absolute coordinates.
+
+    The one-shot helpers stamp a relative-frame factory geometry via
+    ``build.place(geo, at=...)``; what they return is this absolute copy,
+    so ``.bounds()`` reports where the part actually landed.
+    """
+    ax, ay, az = at
+    out = Geometry()
+    for dx, dy, dz, canonical in geo.cells():
+        out.set(dx + ax, dy + ay, dz + az, canonical)
+    return out
 
 
 def stairs_run(
@@ -33,7 +48,7 @@ def stairs_run(
     length: int,
     block: str,
     width: int = 1,
-) -> None:
+) -> Geometry:
     """Straight staircase ascending towards ``direction``.
 
     ``start`` is the (x, y, z) of the FIRST (lowest) step's base position.
@@ -56,16 +71,17 @@ def stairs_run(
     north/south runs widen along +X, east/west runs widen along +Z.
 
     Sugar for ``build.place(mb.part.stairs_run(...), at=start)``.
+
+    Returns the placed :class:`Geometry` (absolute coordinates).
     """
-    build.place(
-        _part.stairs_run(
-            direction=direction, length=length, block=block, width=width
-        ),
-        at=start,
+    geo = _part.stairs_run(
+        direction=direction, length=length, block=block, width=width
     )
+    build.place(geo, at=start)
+    return _at_absolute(geo, start)
 
 
-def pillar(build, base: tuple[int, int, int], height: int, block: str) -> None:
+def pillar(build, base: tuple[int, int, int], height: int, block: str) -> Geometry:
     """Vertical column of ``height`` blocks starting at ``base`` (inclusive).
 
     The ``block`` string is placed verbatim at every level — no props are
@@ -74,8 +90,12 @@ def pillar(build, base: tuple[int, int, int], height: int, block: str) -> None:
     inference"), and only direction-implying parts compute properties.
 
     Sugar for ``build.place(mb.part.pillar(...), at=base)``.
+
+    Returns the placed :class:`Geometry` (absolute coordinates).
     """
-    build.place(_part.pillar(height=height, block=block), at=base)
+    geo = _part.pillar(height=height, block=block)
+    build.place(geo, at=base)
+    return _at_absolute(geo, base)
 
 
 def railing(
@@ -83,7 +103,7 @@ def railing(
     start: tuple[int, int, int],
     end: tuple[int, int, int],
     block: str,
-) -> None:
+) -> Geometry:
     """Straight horizontal run of blocks from ``start`` to ``end`` inclusive.
 
     Must be axis-aligned (x or z constant, y constant across both points)
@@ -98,5 +118,9 @@ def railing(
     ``apply`` model and warns about approximate multipart blocks.)
 
     Sugar for ``build.place(mb.part.railing(...), at=(0, 0, 0))``.
+
+    Returns the placed :class:`Geometry` (absolute coordinates).
     """
-    build.place(_part.railing(start=start, end=end, block=block), at=(0, 0, 0))
+    geo = _part.railing(start=start, end=end, block=block)
+    build.place(geo, at=(0, 0, 0))
+    return _at_absolute(geo, (0, 0, 0))

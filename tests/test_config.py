@@ -9,7 +9,7 @@ from mcbuilder.config import McbuildConfig
 
 def test_defaults():
     cfg = McbuildConfig()
-    assert cfg.mc_version == "1.21.4"
+    assert cfg.mc_version == "26.2"
     assert cfg.max_dimensions == (256, 256, 256)
     assert cfg.allowlist == []
     assert cfg.assets_dir is None

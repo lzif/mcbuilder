@@ -30,6 +30,7 @@ import sys
 
 from mcbuilder.blocks import canonicalize, parse
 from mcbuilder.errors import McbuilderError
+from mcbuilder.geometry import Geometry
 from mcbuilder.voxels import VoxelGrid
 
 
@@ -156,50 +157,68 @@ class Build:
 
     def box(
         self, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str
-    ) -> None:
+    ) -> Geometry:
         """Fill the box between corners ``c1`` and ``c2`` (inclusive, any order).
 
         The block string is placed verbatim — no axis/facing guessing.
+
+        Output bounds: ``(|dx| + 1) × (|dy| + 1) × (|dz| + 1)`` cells.
+
+        Returns the placed :class:`Geometry` (absolute coordinates), so
+        ``geo.bounds()`` reports the exact footprint — size whatever you
+        build next around it (e.g. a chimney through a roof).
         """
         (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
         canonical = canonicalize(block)
-        provenance = _caller_provenance()
-        self._require_batch()
+        geo = Geometry()
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
                 for z in range(z1, z2 + 1):
-                    self._grid.place(x, y, z, canonical, provenance)
+                    geo.set(x, y, z, canonical)
+        self.place(geo, at=(0, 0, 0))
+        return geo
 
     def walls(
         self, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str
-    ) -> None:
+    ) -> Geometry:
         """Hollow box walls between corners (inclusive, any order).
 
         Places the four vertical walls spanning the full height. No floor
         and no ceiling — use :meth:`box` for those. Verbatim placement.
+
+        Output bounds: same XZ footprint as :meth:`box`, full Y range.
+
+        Returns the placed :class:`Geometry` (absolute coordinates).
         """
         (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
         canonical = canonicalize(block)
-        provenance = _caller_provenance()
-        self._require_batch()
+        geo = Geometry()
         for y in range(y1, y2 + 1):
             for z in range(z1, z2 + 1):
-                self._grid.place(x1, y, z, canonical, provenance)
-                self._grid.place(x2, y, z, canonical, provenance)
+                geo.set(x1, y, z, canonical)
+                geo.set(x2, y, z, canonical)
             for x in range(x1 + 1, x2):
-                self._grid.place(x, y, z1, canonical, provenance)
-                self._grid.place(x, y, z2, canonical, provenance)
+                geo.set(x, y, z1, canonical)
+                geo.set(x, y, z2, canonical)
+        self.place(geo, at=(0, 0, 0))
+        return geo
 
     def floor(
         self, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str
-    ) -> None:
-        """One-block-thick slab at ``c1``'s Y spanning the XZ rectangle.
+    ) -> Geometry:
+        """One-block-thick slab at the lower Y of the two corners, spanning
+        the XZ rectangle.
 
         Documented alias: ``box`` with height 1. Readability sugar for
         agents; placement is verbatim.
+
+        Output bounds: XZ footprint of the corners, 1 thick, at
+        ``min(c1.y, c2.y)``.
+
+        Returns the placed :class:`Geometry` (absolute coordinates).
         """
         (x1, y1, z1), (x2, _y2, z2) = _corners(c1, c2)
-        self.box((x1, y1, z1), (x2, y1, z2), block)
+        return self.box((x1, y1, z1), (x2, y1, z2), block)
 
     # -- direction-computing helper --------------------------------------
 
@@ -209,13 +228,20 @@ class Build:
         c2: tuple[int, int, int],
         block: str,
         ridge: str,
-    ) -> None:
+    ) -> Geometry:
         """Gable roof of stairs ascending from both eaves to a ridge line.
 
         ``ridge`` is required (``"x"`` or ``"z"``, no default): the axis
         the ridge line runs along. The roof footprint is the XZ rectangle
         of the corners; it rises from ``min(c1.y, c2.y)`` (the eave
         height — the corners' Y only sets where the eaves sit).
+
+        Output bounds: the XZ footprint of the corners, rising
+        ``ceil(span / 2)`` blocks above the eave height, where ``span``
+        is the footprint extent perpendicular to the ridge (the Z extent
+        for ``ridge="x"``, the X extent for ``ridge="z"``). E.g. a 5-deep
+        span rises 3 blocks; a 6-deep span rises 3 blocks with no ridge
+        row.
 
         Facing rule (computed from geometry, documented here): each row's
         ``facing`` points toward the eave it ascends from, i.e. downhill.
@@ -228,6 +254,10 @@ class Build:
         (passing one is a :class:`BuildError` — the facing is computed,
         never merged). ``half`` defaults to ``bottom`` when absent; all
         other properties and NBT pass through verbatim.
+
+        Returns the placed :class:`Geometry` (absolute coordinates), so
+        ``geo.bounds()`` reports the exact roof footprint and peak —
+        size a chimney (or anything else) around it.
         """
         if ridge not in ("x", "z"):
             raise BuildError(f"roof_gable: ridge must be 'x' or 'z', got {ridge!r}")
@@ -250,32 +280,33 @@ class Build:
             eave_lo, eave_hi = "west", "east"
         span = span_hi - span_lo + 1
         pairs = span // 2
-        provenance = _caller_provenance()
-        self._require_batch()
+        geo = Geometry()
         for k in range(pairs):
             y = y1 + k
             lo = _emit(name, {**base_props, "facing": eave_lo}, nbt)
             hi = _emit(name, {**base_props, "facing": eave_hi}, nbt)
             for r in range(run_lo, run_hi + 1):
                 if ridge == "x":
-                    self._grid.place(r, y, span_lo + k, lo, provenance)
-                    self._grid.place(r, y, span_hi - k, hi, provenance)
+                    geo.set(r, y, span_lo + k, lo)
+                    geo.set(r, y, span_hi - k, hi)
                 else:
-                    self._grid.place(span_lo + k, y, r, lo, provenance)
-                    self._grid.place(span_hi - k, y, r, hi, provenance)
+                    geo.set(span_lo + k, y, r, lo)
+                    geo.set(span_hi - k, y, r, hi)
         if span % 2 == 1:
             y = y1 + pairs
             c = span_lo + pairs
             ridge_block = _emit(name, {**base_props, "facing": eave_lo}, nbt)
             for r in range(run_lo, run_hi + 1):
                 if ridge == "x":
-                    self._grid.place(r, y, c, ridge_block, provenance)
+                    geo.set(r, y, c, ridge_block)
                 else:
-                    self._grid.place(c, y, r, ridge_block, provenance)
+                    geo.set(c, y, r, ridge_block)
+        self.place(geo, at=(0, 0, 0))
+        return geo
 
     # -- instancing: stamp Geometry datablocks (Steal #1) ----------------
 
-    def place(self, geometry, *, at: tuple[int, int, int]) -> None:
+    def place(self, geometry, *, at: tuple[int, int, int]) -> Geometry:
         """Stamp a :class:`mcbuilder.geometry.Geometry` into the grid.
 
         Every relative cell ``(dx, dy, dz)`` of the geometry lands at
@@ -290,9 +321,10 @@ class Build:
 
         Must be called inside ``with BUILD:``. Provenance for all
         stamped cells is the script line calling ``place``.
-        """
-        from mcbuilder.geometry import Geometry
 
+        Returns the stamped geometry (handy for chaining: the one-shot
+        helpers are all built on this).
+        """
         self._require_batch()
         if not isinstance(geometry, Geometry):
             raise BuildError(
@@ -309,34 +341,50 @@ class Build:
         provenance = _caller_provenance()
         for dx, dy, dz, canonical in geometry.cells():
             self._grid.place(ax + dx, ay + dy, az + dz, canonical, provenance)
+        return geometry
 
     # -- parts catalog (PLAN section 4, v0.1) ----------------------------------
 
-    def stairs_run(self, start, direction, length, block, width=1) -> None:
+    def stairs_run(self, start, direction, length, block, width=1) -> Geometry:
         """Straight staircase ascending towards ``direction``.
 
         Thin delegate to :func:`mcbuilder.parts.stairs_run` (see it for the
         facing rule). Must be called inside ``with BUILD:``.
+
+        Output bounds: step ``i`` sits at ``start`` + ``i`` toward
+        ``direction`` and ``start_y + i`` up (``i`` in ``0..length-1``);
+        ``width`` widens perpendicular toward the positive side.
+
+        Returns the placed :class:`Geometry` (absolute coordinates).
         """
         from mcbuilder import parts
 
-        parts.stairs_run(self, start, direction, length, block, width=width)
+        return parts.stairs_run(self, start, direction, length, block, width=width)
 
-    def pillar(self, base, height, block) -> None:
+    def pillar(self, base, height, block) -> Geometry:
         """Vertical column of ``height`` blocks. Delegate to
         :func:`mcbuilder.parts.pillar`. Must be called inside ``with BUILD:``.
+
+        Output bounds: 1 × ``height`` × 1 at ``base`` (up from ``base.y``).
+
+        Returns the placed :class:`Geometry` (absolute coordinates).
         """
         from mcbuilder import parts
 
-        parts.pillar(self, base, height, block)
+        return parts.pillar(self, base, height, block)
 
-    def railing(self, start, end, block) -> None:
+    def railing(self, start, end, block) -> Geometry:
         """Straight horizontal run of blocks. Delegate to
         :func:`mcbuilder.parts.railing`. Must be called inside ``with BUILD:``.
+
+        Output bounds: the straight run from ``start`` to ``end``
+        inclusive (axis-aligned).
+
+        Returns the placed :class:`Geometry` (absolute coordinates).
         """
         from mcbuilder import parts
 
-        parts.railing(self, start, end, block)
+        return parts.railing(self, start, end, block)
 
     # -- post-processing --------------------------------------------------
 

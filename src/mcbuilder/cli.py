@@ -182,7 +182,7 @@ def _scan_determinism(source: str, filename: str) -> list[str]:
 def _resolve_config(script_path: Path, explicit: str | None):
     """Explicit --config wins; otherwise discover mcbuild.toml from the script dir.
 
-    Falls back to default config (mc_version "1.21.4") when no file is found.
+    Falls back to default config (mc_version "26.2") when no file is found.
     """
     if explicit:
         cfg_path = Path(explicit)
@@ -683,7 +683,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "fetch",
         help="fetch minecraft-data + vanilla client assets for a version",
     )
-    f.add_argument("--version", required=True, help="Minecraft version, e.g. 1.21.4")
+    f.add_argument("--version", required=True, help="Minecraft version, e.g. 26.2")
     f.add_argument(
         "--cache-dir",
         default=None,

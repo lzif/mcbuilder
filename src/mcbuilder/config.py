@@ -27,7 +27,7 @@ class McbuildConfig:
         # assets_dir defaults to ~/.cache/mcbuilder/<mc_version>/
     """
 
-    mc_version: str = "1.21.4"
+    mc_version: str = "26.2"
     max_dimensions: tuple[int, int, int] = _DEFAULT_MAX_DIMENSIONS
     allowlist: list[str] = field(default_factory=list)
     assets_dir: Path | None = None
@@ -68,7 +68,7 @@ class McbuildConfig:
 
     @classmethod
     def _from_dict(cls, data: dict) -> "McbuildConfig":
-        mc_version = data.get("mc_version", "1.21.4")
+        mc_version = data.get("mc_version", "26.2")
         if not isinstance(mc_version, str) or not mc_version:
             raise ValueError("mc_version must be a non-empty string")
 
