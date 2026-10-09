@@ -1,4 +1,4 @@
-"""Fast-tier preview renderer (PLAN rev 5, section 4.4).
+"""Fast-tier preview renderer (PLAN rev 7, section 3).
 
 Isometric orthographic renderer: flat vanilla textures on cubes, painter's
 algorithm, back-to-front along the view direction. Deterministic — same
@@ -18,7 +18,7 @@ Grid duck-type contract (implemented by mcbuilder.voxels.VoxelGrid):
   is pre-cropped, the render crop is derived from the array's renderable
   cells directly (array-relative, exclusive hi ends).
 
-Texture rule (PLAN section 4.4): per model parent type, from the first
+Texture rule (PLAN rev 7, section 3): per model parent type, from the first
 variant's model (fallback ``all``):
 ``cube_all`` -> ``all`` on every face; ``cube_column`` -> ``end`` on
 top/bottom, ``side`` on sides; ``cube`` and anything else -> six-face
@@ -49,7 +49,7 @@ LONGEST_SIDE_PX = 1024
 #: Margin added around the projected bbox, as a fraction of each axis range.
 MARGIN = 0.10
 
-# Cube template parents with dedicated texture rules (PLAN section 4.4).
+# Cube template parents with dedicated texture rules (PLAN rev 7, section 3).
 # Anything else uses the six-face lookup.
 _TEMPLATE_PARENTS = frozenset({"cube_all", "cube_column", "cube", "cube_mirrored"})
 

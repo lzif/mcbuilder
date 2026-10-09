@@ -1,4 +1,4 @@
-"""report.json builder (PLAN rev 5, section 4.6).
+"""report.json builder (PLAN rev 7, section 6).
 
 Schema::
 
@@ -15,7 +15,7 @@ Schema::
     }
 
 Every fast-tier preview is flagged ``directions_untrusted: true``
-(PLAN section 4.4) — the fast renderer cannot show facing or connection
+(PLAN rev 7, section 3) — the fast renderer cannot show facing or connection
 state, so a preview must never be trusted for block directions.
 """
 
@@ -25,11 +25,15 @@ import json
 from pathlib import Path
 
 
-def view_entry(*, file: str, view, directions_untrusted: bool = True) -> dict:
+def view_entry(*, file: str, view, directions_untrusted: bool = True,
+               directions_trusted: bool = False) -> dict:
     """Build one ``views[]`` entry from a View-like object.
 
     ``view`` needs ``azimuth``, ``elevation`` and ``label`` attributes
     (see mcbuilder.views.View); ``file`` is the PNG filename.
+    The fast tier passes ``directions_untrusted=True``; the
+    direction-trusted tier (PLAN §3) passes ``directions_trusted=True``
+    (and ``directions_untrusted=False``).
     """
     return {
         "file": file,
@@ -37,6 +41,7 @@ def view_entry(*, file: str, view, directions_untrusted: bool = True) -> dict:
         "elevation": view.elevation,
         "label": view.label,
         "directions_untrusted": directions_untrusted,
+        "directions_trusted": directions_trusted,
     }
 
 

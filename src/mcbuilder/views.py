@@ -1,4 +1,4 @@
-"""View grammar for mcbuilder previews (PLAN rev 5, section 4.4).
+"""View grammar for mcbuilder previews (PLAN rev 7, section 6).
 
 A view is a camera: azimuth (clockwise from north = -Z, degrees) and
 elevation (above horizontal, degrees). Views are pure config — parsing and
@@ -13,7 +13,7 @@ Shorthand grammar (ONE separator style — semicolons only):
     "iso"              -> az045_el035 (pinned)
 
 A colon may optionally follow "az"/"orbit"/"el" ("orbit:8_el:25",
-"az:045_el:025") — PLAN section 4.5's own example uses the colon style,
+"az:045_el:025") — the locked plan's own example (rev 5 §4.5, carried forward) uses the colon style,
 so both are accepted and normalize to the same canonical labels.
 
 Malformed tokens raise ViewError naming the offending token.
@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-#: Hard cap on the number of views in one render set (PLAN section 4.4).
+#: Hard cap on the number of views in one render set (PLAN rev 7, section 6).
 MAX_VIEWS = 36
 
 

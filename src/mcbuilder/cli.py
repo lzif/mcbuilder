@@ -30,6 +30,7 @@ from mcbuilder import config as config_mod
 from mcbuilder import errors as errors_mod
 from mcbuilder import export_nbt as export_nbt_mod
 from mcbuilder import preview as preview_mod
+from mcbuilder import preview_trusted as preview_trusted_mod
 from mcbuilder import registry as registry_mod
 from mcbuilder import report as report_mod
 from mcbuilder import views as views_mod
@@ -415,8 +416,10 @@ def cmd_run(args) -> int:
     run_dir = _next_run_dir(out)
     stem = ctx["script"].stem
     previews_dir = run_dir / "previews"
+    trusted_dir = run_dir / "previews_trusted"
 
     preview_paths: list[Path] = []
+    trusted_paths: list[Path] = []
     if not errors and args.preview:
         try:
             result = preview_mod.render(
@@ -432,6 +435,24 @@ def cmd_run(args) -> int:
                         f"preview: '{name}' has no texture and rendered as "
                         "a flat fallback color — its direction in the "
                         "preview is not trustworthy"
+                    )
+                }
+            )
+        # PLAN §3 direction-trusted tier: orientation-truthful geometry,
+        # no textures needed. One warning per untrusted block type.
+        try:
+            tresult = preview_trusted_mod.render(grid, trusted_dir, view_list, None)
+            trusted_paths = list(tresult)
+        except Exception as e:  # noqa: BLE001 - clean message, no traceback
+            raise CliError(
+                f"trusted preview render failed: {type(e).__name__}: {e}"
+            ) from None
+        for name, n in tresult.info.get("untrusted_blocks", {}).items():
+            warnings.append(
+                {
+                    "message": (
+                        f"trusted preview: {n} `{name}` rendered as labeled "
+                        "cube — orientation not verified"
                     )
                 }
             )
@@ -467,6 +488,20 @@ def cmd_run(args) -> int:
                 file=str(rel), view=view, directions_untrusted=True
             )
         )
+    for view, p in zip(view_list, trusted_paths):
+        try:
+            rel = p.relative_to(run_dir)
+        except ValueError:
+            rel = Path(p.name)
+        # Trusted tier (PLAN §3): orientation-truthful geometry.
+        views_array.append(
+            report_mod.view_entry(
+                file=str(rel),
+                view=view,
+                directions_untrusted=False,
+                directions_trusted=True,
+            )
+        )
 
     report = report_mod.build_report(
         errors=errors,
@@ -499,6 +534,8 @@ def cmd_run(args) -> int:
     print(summary)
     if preview_paths:
         print(f"  previews: {len(preview_paths)} in {previews_dir.name}/")
+    if trusted_paths:
+        print(f"  trusted previews: {len(trusted_paths)} in {trusted_dir.name}/")
     if artifacts:
         a = artifacts[0]
         print(f"  artifact: {a['file']} ({a['format']}, DataVersion {a['data_version']})")
@@ -560,7 +597,8 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--preview",
         action="store_true",
-        help="render preview PNGs into <run>/previews/",
+        help="render preview PNGs into <run>/previews/ (fast tier) and "
+        "<run>/previews_trusted/ (PLAN §3 direction-trusted tier)",
     )
     r.add_argument(
         "--views",

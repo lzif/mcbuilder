@@ -39,6 +39,7 @@ def test_view_entry_shape():
         "elevation": 25.0,
         "label": "az045_el025",
         "directions_untrusted": True,
+        "directions_trusted": False,
     }
 
 

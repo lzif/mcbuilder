@@ -1,12 +1,9 @@
-"""Tests for the mcbuilder parts catalog (v0.1 seed): stairs_run, pillar, railing.
+"""Tests for the mcbuilder parts catalog: stairs_run, pillar, railing.
 
-The real ``Build`` class (``src/mcbuilder/build.py``) is being implemented by
-another agent in parallel; it isn't in the tree yet. These tests therefore
-exercise the parts against a minimal recording stand-in that honors the one
-interface the parts depend on: ``build.set(x, y, z, block: str)``.
-
-When the real Build lands, the same assertions can be re-run against it —
-the parts make no other demands on ``build``.
+The one-shot parts are sugar over the datablock layer
+(``mcbuilder.part.*`` factories + ``Build.place``), so these tests
+exercise them against a minimal recording stand-in honoring the
+interface the parts depend on: ``build.place(geometry, *, at)``.
 """
 
 import pytest
@@ -22,8 +19,10 @@ class FakeBuild:
     def __init__(self):
         self.placements: dict[tuple[int, int, int], str] = {}
 
-    def set(self, x: int, y: int, z: int, block: str) -> None:
-        self.placements[(x, y, z)] = block
+    def place(self, geometry, *, at) -> None:
+        ax, ay, az = at
+        for dx, dy, dz, block in geometry.cells():
+            self.placements[(ax + dx, ay + dy, az + dz)] = block
 
 
 # ---------------------------------------------------------------- stairs_run

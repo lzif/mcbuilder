@@ -273,7 +273,44 @@ class Build:
                 else:
                     self._grid.place(c, y, r, ridge_block, provenance)
 
-    # -- parts catalog (PLAN section 4.2) -------------------------------------
+    # -- instancing: stamp Geometry datablocks (Steal #1) ----------------
+
+    def place(self, geometry, *, at: tuple[int, int, int]) -> None:
+        """Stamp a :class:`mcbuilder.geometry.Geometry` into the grid.
+
+        Every relative cell ``(dx, dy, dz)`` of the geometry lands at
+        ``(at_x + dx, at_y + dy, at_z + dz)``. Last write wins on overlap
+        (same rule as :meth:`set`). The geometry is never mutated — one
+        instance can be stamped many times.
+
+        This is the op-layer counterpart to the datablock layer
+        (``mcbuilder.part.*`` factories): define once, stamp many, with
+        explicit coordinates every time (no ``bpy.context``-style
+        implicit placement state — the ``at`` keyword has no default).
+
+        Must be called inside ``with BUILD:``. Provenance for all
+        stamped cells is the script line calling ``place``.
+        """
+        from mcbuilder.geometry import Geometry
+
+        self._require_batch()
+        if not isinstance(geometry, Geometry):
+            raise BuildError(
+                f"place: expected a mcbuilder.geometry.Geometry, "
+                f"got {type(geometry).__name__}"
+            )
+        try:
+            ax, ay, az = at
+        except (TypeError, ValueError):
+            raise BuildError(f"place: at must be 3 ints, got {at!r}")
+        for v in (ax, ay, az):
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise BuildError(f"place: at coordinates must be ints, got {v!r}")
+        provenance = _caller_provenance()
+        for dx, dy, dz, canonical in geometry.cells():
+            self._grid.place(ax + dx, ay + dy, az + dz, canonical, provenance)
+
+    # -- parts catalog (PLAN section 4, v0.1) ----------------------------------
 
     def stairs_run(self, start, direction, length, block, width=1) -> None:
         """Straight staircase ascending towards ``direction``.
@@ -361,10 +398,14 @@ class Build:
         _, palette, _ = self._grid.to_dense()
         return registry.validate(palette, allowlist=allowlist)
 
-    def render(self, out_dir, views=None, assets_dir=None) -> list:
+    def render(self, out_dir, views=None, assets_dir=None, tier="fast") -> list:
         """Render preview PNGs to ``out_dir``. Returns ordered ``list[Path]``.
 
-        The harness path (PLAN section 4.4): same views produce the same
+        ``tier`` selects the renderer: ``"fast"`` (textured cubes,
+        directions untrusted) or ``"trusted"`` (PLAN §3 direction-trusted
+        tier — orientation-truthful simplified geometry, no textures).
+
+        The harness path (PLAN rev 7, section 6): same views produce the same
         files as the CLI's ``previews/`` dir, in the same order as the
         report's views array. View precedence: the explicit ``views``
         argument > this build's ``views_config`` (``Build(views=...)`` /
@@ -373,10 +414,16 @@ class Build:
         semicolon-separated spec string.
         """
         from mcbuilder import preview as preview_mod
+        from mcbuilder import preview_trusted as trusted_mod
         from mcbuilder import views as views_mod
 
+        if tier not in ("fast", "trusted"):
+            raise BuildError(
+                f"render: tier must be 'fast' or 'trusted', got {tier!r}"
+            )
         view_list = self._resolve_render_views(views, views_mod)
-        return list(preview_mod.render(self._grid, out_dir, view_list, assets_dir))
+        mod = trusted_mod if tier == "trusted" else preview_mod
+        return list(mod.render(self._grid, out_dir, view_list, assets_dir))
 
     def _resolve_render_views(self, views, views_mod) -> list:
         if views is None:

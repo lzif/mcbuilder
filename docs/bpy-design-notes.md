@@ -2,7 +2,11 @@
 
 Source: `~/workspace/blender-modal/BPY_NOTES.md` (Blender 4.2.3 API).
 Target: mcbuilder's agent-facing API (`src/mcbuilder/build.py`, `parts.py`).
-Status: design input for the unlocked plan — not implemented.
+Status: **IMPLEMENTED in v0.2** (PLAN rev 7, locked 2026-10-09) —
+`Geometry` (`src/mcbuilder/geometry.py`), `BUILD.place()`
+(`src/mcbuilder/build.py`), `mb.part.*` factories
+(`src/mcbuilder/part.py`), layering law documented in
+`geometry.py`'s module docstring. This file is now history.
 
 ## The core insight
 
