@@ -31,6 +31,7 @@ from mcbuilder import errors as errors_mod
 from mcbuilder import export_nbt as export_nbt_mod
 from mcbuilder import preview as preview_mod
 from mcbuilder import preview_trusted as preview_trusted_mod
+from mcbuilder import preview_faithful as preview_faithful_mod
 from mcbuilder import registry as registry_mod
 from mcbuilder import report as report_mod
 from mcbuilder import views as views_mod
@@ -417,9 +418,11 @@ def cmd_run(args) -> int:
     stem = ctx["script"].stem
     previews_dir = run_dir / "previews"
     trusted_dir = run_dir / "previews_trusted"
+    faithful_dir = run_dir / "previews_faithful"
 
     preview_paths: list[Path] = []
     trusted_paths: list[Path] = []
+    faithful_paths: list[Path] = []
     if not errors and args.preview:
         try:
             result = preview_mod.render(
@@ -453,6 +456,39 @@ def cmd_run(args) -> int:
                     "message": (
                         f"trusted preview: {n} `{name}` rendered as labeled "
                         "cube — orientation not verified"
+                    )
+                }
+            )
+        # PLAN §3 faithful tier (v0.3): real model geometry + real
+        # textures, Shadow Court presentation. One warning per
+        # untrusted block type.
+        try:
+            title = stem.replace("_", " ").title()
+            fresult = preview_faithful_mod.render(
+                grid, faithful_dir, view_list,
+                ctx["config"].resolve_assets_dir(),
+                presentation=True, title=title,
+            )
+            faithful_paths = list(fresult)
+        except Exception as e:  # noqa: BLE001 - clean message, no traceback
+            raise CliError(
+                f"faithful preview render failed: {type(e).__name__}: {e}"
+            ) from None
+        for name, n in fresult.info.get("untrusted_blocks", {}).items():
+            warnings.append(
+                {
+                    "message": (
+                        f"faithful preview: {n} `{name}` rendered as labeled "
+                        "cube — orientation not verified"
+                    )
+                }
+            )
+        if fresult.info.get("assets_missing"):
+            warnings.append(
+                {
+                    "message": (
+                        "faithful preview: vanilla client assets not found — "
+                        "all blocks rendered as fallback cubes"
                     )
                 }
             )
@@ -502,6 +538,20 @@ def cmd_run(args) -> int:
                 directions_trusted=True,
             )
         )
+    for view, p in zip(view_list, faithful_paths):
+        try:
+            rel = p.relative_to(run_dir)
+        except ValueError:
+            rel = Path(p.name)
+        # Faithful tier (PLAN §3 v0.3): real geometry + real textures.
+        views_array.append(
+            report_mod.view_entry(
+                file=str(rel),
+                view=view,
+                directions_untrusted=False,
+                directions_trusted=True,
+            )
+        )
 
     report = report_mod.build_report(
         errors=errors,
@@ -536,6 +586,8 @@ def cmd_run(args) -> int:
         print(f"  previews: {len(preview_paths)} in {previews_dir.name}/")
     if trusted_paths:
         print(f"  trusted previews: {len(trusted_paths)} in {trusted_dir.name}/")
+    if faithful_paths:
+        print(f"  faithful previews: {len(faithful_paths)} in {faithful_dir.name}/")
     if artifacts:
         a = artifacts[0]
         print(f"  artifact: {a['file']} ({a['format']}, DataVersion {a['data_version']})")
@@ -597,8 +649,9 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--preview",
         action="store_true",
-        help="render preview PNGs into <run>/previews/ (fast tier) and "
-        "<run>/previews_trusted/ (PLAN §3 direction-trusted tier)",
+        help="render preview PNGs into <run>/previews/ (fast tier), "
+        "<run>/previews_trusted/ (PLAN §3 direction-trusted tier) and "
+        "<run>/previews_faithful/ (PLAN §3 v0.3 faithful tier)",
     )
     r.add_argument(
         "--views",

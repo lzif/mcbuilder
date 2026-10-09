@@ -216,16 +216,19 @@ def test_cli_run_end_to_end(tmp_path, monkeypatch):
     run_dir = out / "run-001"
     report = json.loads((run_dir / "report.json").read_text())
     assert report["errors"] == []
-    # Both tiers render: 9 fast + 9 trusted.
-    assert len(report["views"]) == 18
+    # All three tiers render: 9 fast + 9 trusted + 9 faithful.
+    assert len(report["views"]) == 27
     assert report["views"][0]["file"] == "previews/az000_el025.png"
     assert report["views"][0]["label"] == "az000_el025"
-    assert report["views"][-1]["file"] == "previews_trusted/top.png"
+    assert report["views"][-1]["file"] == "previews_faithful/top.png"
     fast = report["views"][:9]
-    trusted = report["views"][9:]
+    trusted = report["views"][9:18]
+    faithful = report["views"][18:]
     assert all(v["directions_untrusted"] and not v["directions_trusted"] for v in fast)
     assert all(v["directions_trusted"] and not v["directions_untrusted"] for v in trusted)
     assert all(v["file"].startswith("previews_trusted/") for v in trusted)
+    assert all(v["directions_trusted"] and not v["directions_untrusted"] for v in faithful)
+    assert all(v["file"].startswith("previews_faithful/") for v in faithful)
     # block_counts is the survival shopping list: post-crop, air excluded
     assert report["block_counts"]["minecraft:oak_planks"] == 5 * 3 * 5
     assert report["block_counts"]["minecraft:stone_brick_stairs[facing=west,half=bottom]"] == 3

@@ -293,9 +293,9 @@ def test_run_with_preview_uses_script_views(tmp_path):
     assert all(p.stat().st_size > 100 for p in previews)
 
     report = json.loads((run / "report.json").read_text(encoding="utf-8"))
-    # Both tiers render: 2 fast + 2 trusted.
-    assert len(report["views"]) == 4
-    v0, v1, v2, v3 = report["views"]
+    # All three tiers render: 2 fast + 2 trusted + 2 faithful.
+    assert len(report["views"]) == 6
+    v0, v1, v2, v3, v4, v5 = report["views"]
     assert v0["file"] == "previews/az045_el025.png"
     assert (v0["azimuth"], v0["elevation"], v0["label"]) == (45, 25, "az045_el025")
     assert v0["directions_untrusted"] and not v0["directions_trusted"]
@@ -304,9 +304,16 @@ def test_run_with_preview_uses_script_views(tmp_path):
     assert v2["directions_trusted"] and not v2["directions_untrusted"]
     assert v3["file"] == "previews_trusted/top.png"
     assert v3["directions_trusted"] and not v3["directions_untrusted"]
+    assert v4["file"] == "previews_faithful/az045_el025.png"
+    assert v4["directions_trusted"] and not v4["directions_untrusted"]
+    assert v5["file"] == "previews_faithful/top.png"
+    assert v5["directions_trusted"] and not v5["directions_untrusted"]
     trusted = sorted((run / "previews_trusted").glob("*.png"))
     assert [p.name for p in trusted] == ["az045_el025.png", "top.png"]
     assert all(p.stat().st_size > 100 for p in trusted)
+    faithful = sorted((run / "previews_faithful").glob("*.png"))
+    assert [p.name for p in faithful] == ["az045_el025.png", "top.png"]
+    assert all(p.stat().st_size > 100 for p in faithful)
     assert (v1["azimuth"], v1["elevation"], v1["label"]) == (0, 90, "top")
     for v in report["views"][:2]:
         assert v["directions_untrusted"] is True  # fast tier

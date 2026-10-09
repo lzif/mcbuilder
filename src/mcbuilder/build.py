@@ -398,12 +398,19 @@ class Build:
         _, palette, _ = self._grid.to_dense()
         return registry.validate(palette, allowlist=allowlist)
 
-    def render(self, out_dir, views=None, assets_dir=None, tier="fast") -> list:
+    def render(self, out_dir, views=None, assets_dir=None, tier="fast",
+               presentation=True, title=None) -> list:
         """Render preview PNGs to ``out_dir``. Returns ordered ``list[Path]``.
 
         ``tier`` selects the renderer: ``"fast"`` (textured cubes,
-        directions untrusted) or ``"trusted"`` (PLAN §3 direction-trusted
-        tier — orientation-truthful simplified geometry, no textures).
+        directions untrusted), ``"trusted"`` (PLAN §3 direction-trusted
+        tier — orientation-truthful simplified geometry, no textures), or
+        ``"faithful"`` (vanilla model geometry + textures, directions
+        trusted).
+
+        ``presentation`` and ``title`` apply to the faithful tier only:
+        ``presentation=True`` (default) is the Shadow Court look (light
+        background, soft shadow, no debug chrome).
 
         The harness path (PLAN rev 7, section 6): same views produce the same
         files as the CLI's ``previews/`` dir, in the same order as the
@@ -415,13 +422,19 @@ class Build:
         """
         from mcbuilder import preview as preview_mod
         from mcbuilder import preview_trusted as trusted_mod
+        from mcbuilder import preview_faithful as faithful_mod
         from mcbuilder import views as views_mod
 
-        if tier not in ("fast", "trusted"):
+        if tier not in ("fast", "trusted", "faithful"):
             raise BuildError(
-                f"render: tier must be 'fast' or 'trusted', got {tier!r}"
+                f"render: tier must be 'fast', 'trusted' or 'faithful', "
+                f"got {tier!r}"
             )
         view_list = self._resolve_render_views(views, views_mod)
+        if tier == "faithful":
+            return list(faithful_mod.render(
+                self._grid, out_dir, view_list, assets_dir,
+                presentation=presentation, title=title))
         mod = trusted_mod if tier == "trusted" else preview_mod
         return list(mod.render(self._grid, out_dir, view_list, assets_dir))
 

@@ -48,16 +48,16 @@ def test_stair_boxes_north_bottom_straight():
     boxes = pt._stair_boxes("north", "bottom", "straight")
     assert boxes == [
         (0.0, 0.0, 0.0, 1.0, 0.5, 1.0),  # base slab
-        (0.0, 0.0, 0.5, 1.0, 1.0, 1.0),  # tall back (south) half
+        (0.0, 0.0, 0.0, 1.0, 1.0, 0.5),  # tall back (north) half
     ]
 
 
 def test_stair_boxes_east_bottom_straight():
-    # Tall part rotates to the back = west (-X) half.
+    # Tall part rotates to the back = east (+X) half (vanilla-verified).
     boxes = pt._stair_boxes("east", "bottom", "straight")
     assert boxes == [
         (0.0, 0.0, 0.0, 1.0, 0.5, 1.0),
-        (0.0, 0.0, 0.0, 0.5, 1.0, 1.0),
+        (0.5, 0.0, 0.0, 1.0, 1.0, 1.0),
     ]
 
 
@@ -65,7 +65,7 @@ def test_stair_boxes_south_bottom_straight():
     boxes = pt._stair_boxes("south", "bottom", "straight")
     assert boxes == [
         (0.0, 0.0, 0.0, 1.0, 0.5, 1.0),
-        (0.0, 0.0, 0.0, 1.0, 1.0, 0.5),
+        (0.0, 0.0, 0.5, 1.0, 1.0, 1.0),
     ]
 
 
@@ -73,16 +73,16 @@ def test_stair_boxes_top_half_mirrors_y():
     boxes = pt._stair_boxes("north", "top", "straight")
     assert boxes == [
         (0.0, 0.5, 0.0, 1.0, 1.0, 1.0),
-        (0.0, 0.0, 0.5, 1.0, 1.0, 1.0),
+        (0.0, 0.0, 0.0, 1.0, 1.0, 0.5),
     ]
 
 
 def test_stair_boxes_inner_outer_shapes():
     inner = pt._stair_boxes("north", "bottom", "inner_left")
-    assert (0.0, 0.5, 0.0, 0.5, 1.0, 0.5) in inner
+    assert (0.0, 0.5, 0.5, 0.5, 1.0, 1.0) in inner
     assert len(inner) == 3
     outer = pt._stair_boxes("north", "bottom", "outer_right")
-    assert (0.0, 0.0, 0.5, 0.5, 1.0, 1.0) in outer
+    assert (0.0, 0.0, 0.0, 0.5, 1.0, 0.5) in outer
     assert len(outer) == 2
     # Unknown shape falls back to straight (never crashes the tier).
     assert pt._stair_boxes("north", "bottom", "sideways") == \

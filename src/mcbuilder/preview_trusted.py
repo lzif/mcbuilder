@@ -131,9 +131,15 @@ def _mirror_box_y(box) -> tuple:
     return (x0, 1.0 - y1, z0, x1, 1.0 - y0, z1)
 
 
-# North-facing, bottom-half, straight stair template (tall part at back = +Z).
+# North-facing, bottom-half, straight stair template. Orientation verified
+# against the vanilla model (models/block/stairs.json: the tall element is
+# x∈[8,16]; blockstates map the unrotated model to facing=east; y rotations
+# run clockwise viewed from above): a north-facing stair has its tall part
+# at the NORTH (-Z) half. (A 2026-10-09 audit caught this template with the
+# tall part at +Z — mirrored vs vanilla. Fixed; corner shapes below are the
+# same documented approximation, Z-mirrored to match.)
 _STAIR_SLAB = (0.0, 0.0, 0.0, 1.0, 0.5, 1.0)
-_STAIR_BACK = (0.0, 0.0, 0.5, 1.0, 1.0, 1.0)
+_STAIR_BACK = (0.0, 0.0, 0.0, 1.0, 1.0, 0.5)
 
 
 def _stair_boxes(facing: str, half: str, shape: str) -> list[tuple]:
@@ -147,13 +153,13 @@ def _stair_boxes(facing: str, half: str, shape: str) -> list[tuple]:
     """
     boxes = [_STAIR_SLAB, _STAIR_BACK]
     if shape == "inner_left":
-        boxes.append((0.0, 0.5, 0.0, 0.5, 1.0, 0.5))
+        boxes.append((0.0, 0.5, 0.5, 0.5, 1.0, 1.0))
     elif shape == "inner_right":
-        boxes.append((0.5, 0.5, 0.0, 1.0, 1.0, 0.5))
+        boxes.append((0.5, 0.5, 0.5, 1.0, 1.0, 1.0))
     elif shape == "outer_left":
-        boxes[1] = (0.5, 0.0, 0.5, 1.0, 1.0, 1.0)
+        boxes[1] = (0.5, 0.0, 0.0, 1.0, 1.0, 0.5)
     elif shape == "outer_right":
-        boxes[1] = (0.0, 0.0, 0.5, 0.5, 1.0, 1.0)
+        boxes[1] = (0.0, 0.0, 0.0, 0.5, 1.0, 0.5)
     if half == "top":
         boxes = [_mirror_box_y(b) for b in boxes]
     # Rotate the north template to the requested facing.
