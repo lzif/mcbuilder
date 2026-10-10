@@ -15,6 +15,7 @@ No stub files are written into src/.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -596,3 +597,29 @@ def test_init_generated_script_passes_check(tmp_path, monkeypatch, capsys):
     assert main(["check", str(script)]) == 0
     out, _ = capsys.readouterr()
     assert "0 errors" in out
+
+
+def test_init_trailing_slash_writes_inside_dir(tmp_path, capsys):
+    assert main(["init", str(tmp_path / "scaffold") + os.sep]) == 0
+    assert (tmp_path / "scaffold" / "house.py").is_file()
+    out, _ = capsys.readouterr()
+    assert "scaffold" in out
+
+
+def test_init_template_matches_guide_recipe():
+    """Pin the HOUSE_TEMPLATE <-> GUIDE §2 coupling.
+
+    The template's 5-line header is init-specific; the recipe body must
+    appear verbatim in the template, so a GUIDE §2 edit can't silently
+    drift the scaffold (or vice versa).
+    """
+    from mcbuilder import cli as cli_mod
+
+    guide = Path(__file__).resolve().parent.parent / "docs" / "GUIDE.md"
+    section = guide.read_text(encoding="utf-8").split(
+        "## 2. Five-minute house", 1
+    )[1]
+    block = section.split("```python", 1)[1].split("```", 1)[0]
+    recipe_lines = block.strip("\n").splitlines()
+    assert recipe_lines[0].strip() == "# house.py"
+    assert "\n".join(recipe_lines[1:]) in cli_mod.HOUSE_TEMPLATE

@@ -648,8 +648,10 @@ def cmd_assets_fetch(args) -> int:
 # init — starter scaffold
 # ---------------------------------------------------------------------------
 
-# NOTE: this template mirrors docs/GUIDE.md §2 ("Five-minute house"). If the
-# recipe changes there, update this string to match (and vice versa).
+# NOTE: the recipe body below mirrors docs/GUIDE.md §2 ("Five-minute house").
+# The 5-line header is init-specific. The coupling is pinned by
+# tests/test_cli.py::test_init_template_matches_guide_recipe — if the recipe
+# changes in either place, update the other.
 HOUSE_TEMPLATE = '''\
 # house.py — starter mcbuilder build (written by `mcbuild init`).
 #
@@ -685,7 +687,9 @@ with BUILD:
 
 def cmd_init(args) -> int:
     """Write the starter scaffold; refuse to clobber without --force."""
-    target = Path(args.path)
+    raw = args.path
+    # A trailing separator signals directory intent: scaffold/ -> scaffold/house.py
+    target = Path(raw) / "house.py" if raw.endswith(os.sep) else Path(raw)
     if target.is_dir():
         raise CliError(f"not a file: {target}")
     if target.exists() and not args.force:
