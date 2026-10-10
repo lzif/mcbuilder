@@ -14,22 +14,60 @@ def _floor(x, z):
     return SP if x in (0, 6) or z in (0, 6) else "minecraft:cobblestone"
 
 
-def _trapdoors() -> mb.Geometry:
-    """Skirting under the y=5 canopy edge: y=4, outward-facing, half=bottom.
+def _trapdoor_band():
+    """Continuous trapdoor skirting at y=4 under the eave: full perimeter.
 
-    For each pillar at (px,pz), place trapdoors on the two outward faces
-    (toward the 7x7 edge), at the non-pillar edge cells.
+    Top-half panels read as one dark soffit band from every angle (the old
+    per-pillar tabs read as disjointed shelves in iso).
     """
     g = mb.Geometry()
-    # (pillar, outward dir, trapdoor pos, facing)
-    specs = [
-        ((1, 1), (0, 4, 1), "west"),  ((1, 1), (1, 4, 0), "north"),
-        ((1, 5), (0, 4, 5), "west"),  ((1, 5), (1, 4, 6), "south"),
-        ((5, 1), (6, 4, 1), "east"),  ((5, 1), (5, 4, 0), "north"),
-        ((5, 5), (6, 4, 5), "east"),  ((5, 5), (5, 4, 6), "south"),
-    ]
-    for _pillar, (x, y, z), facing in specs:
-        g.set(x, y, z, f"minecraft:spruce_trapdoor[facing={facing},half=bottom,open=false]")
+    for x in range(7):
+        for z in range(7):
+            if x in (0, 6) or z in (0, 6):
+                if x == 0:
+                    facing = "west"
+                elif x == 6:
+                    facing = "east"
+                elif z == 0:
+                    facing = "north"
+                else:
+                    facing = "south"
+                g.set(
+                    x, 4, z,
+                    f"minecraft:spruce_trapdoor[facing={facing},half=top,open=false]",
+                )
+    return g
+
+
+def _canopy():
+    """Stepped pyramid roof: y=5 7x7 (stair eave + plank field), y=6 3x3
+    stepped cap with stair shoulders and a plank crown."""
+    g = mb.Geometry()
+    field = mb.part.box(c1=(0, 0, 0), c2=(4, 0, 4), block=SP)
+    for x, y, z, b in field.cells():
+        g.set(x + 1, 5, z + 1, b)
+    for i in range(1, 6):
+        g.set(i, 5, 0, "minecraft:spruce_stairs[facing=north,half=bottom]")
+        g.set(i, 5, 6, "minecraft:spruce_stairs[facing=south,half=bottom]")
+        g.set(0, 5, i, "minecraft:spruce_stairs[facing=west,half=bottom]")
+        g.set(6, 5, i, "minecraft:spruce_stairs[facing=east,half=bottom]")
+    for cx, cz in ((0, 0), (0, 6), (6, 0), (6, 6)):
+        g.set(cx, 5, cz, SP)
+    for dx in range(3):
+        for dz in range(3):
+            x, z = 2 + dx, 2 + dz
+            if (dx, dz) == (1, 1):
+                g.set(x, 6, z, SP)
+            elif (dx, dz) == (1, 0):
+                g.set(x, 6, z, "minecraft:spruce_stairs[facing=north,half=bottom]")
+            elif (dx, dz) == (1, 2):
+                g.set(x, 6, z, "minecraft:spruce_stairs[facing=south,half=bottom]")
+            elif (dx, dz) == (0, 1):
+                g.set(x, 6, z, "minecraft:spruce_stairs[facing=west,half=bottom]")
+            elif (dx, dz) == (2, 1):
+                g.set(x, 6, z, "minecraft:spruce_stairs[facing=east,half=bottom]")
+            else:
+                g.set(x, 6, z, SP)
     return g
 
 
@@ -48,20 +86,11 @@ with BUILD:
         at=(0, 0, 0),
     )
     BUILD.place(common.pillars(pillar_block=SP), at=(0, 0, 0))
-    BUILD.place(_trapdoors(), at=(0, 0, 0))
-    BUILD.place(
-        common.pedestal(
-            pedestal_block="minecraft:cobblestone",
-            hang_block="minecraft:lantern",
-        ),
-        at=(0, 0, 0),
-    )
-    BUILD.place(
-        common.canopy(
-            plate_slab="minecraft:spruce_slab[type=bottom]",
-            eave_stair="minecraft:spruce_stairs",
-            corner_block=SP,
-            cap_block=SP,
-        ),
-        at=(0, 0, 0),
-    )
+    BUILD.place(_trapdoor_band(), at=(0, 0, 0))
+    # Short pedestal + framed, lit centerpiece: cobble base, waystone,
+    # hanging lantern on a chain from the canopy.
+    BUILD.set(3, 1, 3, "minecraft:cobblestone")
+    BUILD.set(3, 2, 3, common.WAYSTONE)
+    BUILD.set(3, 3, 3, "minecraft:lantern[hanging=true]")
+    BUILD.set(3, 4, 3, "minecraft:iron_chain[axis=y]")
+    BUILD.place(_canopy(), at=(0, 0, 0))

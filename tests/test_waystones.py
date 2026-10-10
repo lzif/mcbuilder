@@ -6,7 +6,8 @@ every variant must satisfy, using the REAL script loader and exporter:
 
 - the script defines BUILD and builds without error;
 - dimensions are exactly 7x7x7;
-- ``lostqol:waystone`` sits at the pedestal top (3, 3, 3);
+- ``lostqol:waystone`` sits at the pedestal top (3, 3, 3), except Rustic Path
+  whose short pedestal puts it at (3, 2, 3);
 - the .nbt export round-trips with the waystone entry intact.
 """
 
@@ -27,6 +28,16 @@ VARIANTS = [
     "waystone_rustic_path.py",
     "waystone_skystead.py",
 ]
+
+# Expected waystone cell per variant. Rustic Path sits on a SHORT pedestal
+# (fix round 2: "cube on a stick" -> framed centerpiece at y=2); the rest
+# keep the standard pedestal top at y=3.
+WAYSTONE_CELL = {
+    "waystone_classic_ruin.py": (3, 3, 3),
+    "waystone_dark_ritual.py": (3, 3, 3),
+    "waystone_rustic_path.py": (3, 2, 3),
+    "waystone_skystead.py": (3, 3, 3),
+}
 
 
 def _load(name):
@@ -64,7 +75,7 @@ def test_variant_is_7x7x7(variant):
 @pytest.mark.parametrize("variant", VARIANTS)
 def test_variant_waystone_at_pedestal_top(variant):
     build = _load(variant)
-    assert _waystone_cell(build) == (3, 3, 3), variant
+    assert _waystone_cell(build) == WAYSTONE_CELL[variant], variant
 
 
 @pytest.mark.parametrize("variant", VARIANTS)
