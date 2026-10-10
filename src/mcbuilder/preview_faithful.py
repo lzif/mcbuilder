@@ -524,6 +524,9 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                     fallback_blocks.add(block_name)
                     img = Image.new("RGB", (16, 16), fallback_color)
                     u0, v0, u1, v1 = 0, 0, 16, 16
+                    has_real_texture = False
+                else:
+                    has_real_texture = True
                 tw, th = img.size
                 # UVs are in 0–16 texture space; scale to pixels.
                 sx, sy = tw / 16.0, th / 16.0
@@ -533,6 +536,18 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                     continue
                 crop = _face_uv_rotation_crop(
                     crop, int(face.get("rotation", 0)))
+                # Biome tint (plains default): multiply the tint into the
+                # per-face crop — never into tex_cache, whose source images
+                # are shared across blocks/palette entries. Faces without
+                # tintindex (or blocks with no table entry) stay untinted;
+                # missing-texture flat colors are never tinted (debug
+                # signal). Applied before directional shading, matching
+                # vanilla's tint-before-lighting order.
+                ti = face.get("tintindex", -1)
+                if (has_real_texture and isinstance(ti, int) and ti >= 0
+                        and (tint := _fast._TINT_TABLE.get(block_name))
+                        is not None):
+                    crop = _fast._tint_image(crop, tint)
                 # UV corner assignment: painted-on for BOTH uvlock values.
                 # Vanilla semantics (verified against the blockstate/model
                 # JSONs): the texture is attached to the model in model
@@ -581,7 +596,7 @@ def _fallback_cube_quads(fallback_color):
 _FLUID_RGBA = {
     # Fluids have no block model (special in-game renderer): render as
     # translucent blue/orange cubes instead of the magenta fallback.
-    "minecraft:water": (52, 120, 235, 150),
+    "minecraft:water": (63, 118, 228, 150),
     "minecraft:lava": (255, 110, 20, 210),
     # Chests are block entities (no JSON model): plain wooden box.
     "minecraft:chest": (181, 140, 82, 255),

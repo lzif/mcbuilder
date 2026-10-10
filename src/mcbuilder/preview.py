@@ -197,17 +197,19 @@ def _match_variant(variants: dict, props: dict[str, str]):
 
 
 def _resolve_model_textures(block_name: str, props: dict, root: Path):
-    """Return (textures, parent_leaf).
+    """Return (textures, parent_leaf, tinted_vars).
 
     textures maps texture variable -> PIL RGB image (None if unloadable);
     parent_leaf is the first known cube-template leaf walking down from the
-    variant's model (e.g. 'cube_all', 'cube_column'), or None.
-    Never raises: any failure yields ({}, None).
+    variant's model (e.g. 'cube_all', 'cube_column'), or None;
+    tinted_vars is the set of texture variables (keys of textures)
+    referenced by faces with tintindex >= 0 in the resolved elements.
+    Never raises: any failure yields ({}, None, set()).
     """
     try:
         return _do_resolve(block_name, props, root)
     except Exception:
-        return {}, None
+        return {}, None, set()
 
 
 def _do_resolve(block_name: str, props: dict, root: Path):
@@ -217,7 +219,7 @@ def _do_resolve(block_name: str, props: dict, root: Path):
                   encoding="utf-8") as f:
             bs = json.load(f)
     except Exception:
-        return {}, None
+        return {}, None, set()
 
     model_ref = None
     variants = bs.get("variants")
@@ -240,7 +242,7 @@ def _do_resolve(block_name: str, props: dict, root: Path):
                 break
 
     if not model_ref:
-        return {}, None
+        return {}, None, set()
 
     # Walk the parent chain, collecting textures (child overrides parent).
     # A missing/unreadable parent just ends the walk; we keep what we have.
@@ -265,7 +267,7 @@ def _do_resolve(block_name: str, props: dict, root: Path):
         ref = parent
 
     if not chain:
-        return {}, None
+        return {}, None, set()
 
     textures: dict[str, str] = {}
     for model in reversed(chain):
@@ -306,7 +308,32 @@ def _do_resolve(block_name: str, props: dict, root: Path):
                 images[var] = im.convert("RGB")
         except Exception:
             images[var] = None
-    return images, parent_leaf
+
+    # Texture variables referenced by faces with tintindex >= 0, collected
+    # from the nearest chain entry that defines elements — the same model
+    # the faithful tier reads its elements from.
+    # Known fast-tier limitation (bamboo): only the FIRST multipart apply's
+    # model is resolved above, so a block whose tinted faces live in later
+    # applies (bamboo leaves) yields an empty set here and renders
+    # stalk-only, untinted. Unioning across applies would be unsound
+    # (texture var names are model-local); the faithful tier iterates every
+    # matching multipart case and tints per face correctly.
+    tinted_vars: set[str] = set()
+    for model in chain:
+        elements = model.get("elements")
+        if elements:
+            for el in elements:
+                faces = (el.get("faces") or {}) if isinstance(el, dict) else {}
+                for face in faces.values():
+                    if not isinstance(face, dict):
+                        continue
+                    ti = face.get("tintindex", -1)
+                    if isinstance(ti, int) and ti >= 0:
+                        var = (face.get("texture") or "").lstrip("#")
+                        if var in images:
+                            tinted_vars.add(var)
+            break
+    return images, parent_leaf, tinted_vars
 
 
 def _face_tex_vars(images: dict, parent_leaf: str | None) -> dict[str, str | None]:
@@ -340,9 +367,74 @@ def _face_tex_vars(images: dict, parent_leaf: str | None) -> dict[str, str | Non
 _FLUID_FLAT = {
     # Fluids have no block model (special in-game renderer); render them
     # as flat blue/orange instead of the hash-based fallback color.
-    "minecraft:water": (52, 120, 235),
+    "minecraft:water": (63, 118, 228),
     "minecraft:lava": (255, 110, 20),
 }
+
+
+# ---------------------------------------------------------------------------
+# Biome tint (plains default)
+# ---------------------------------------------------------------------------
+# Plains tints, sampled from the 26.2 client colormaps: plains.json has
+# temperature=0.8, downfall=0.4, no grass_color_modifier, so vanilla's
+# shared ColorMapColorUtil samples pixel (int((1-0.8)*255),
+# int((1-0.8*0.4)*255)) = (50, 173) on each 256x256 colormap.
+_PLAINS_GRASS = (145, 189, 89)      # grass.png @ (50,173)  = #91BD59
+_PLAINS_FOLIAGE = (119, 171, 47)   # foliage.png @ (50,173) = #77AB2F
+_PLAINS_DRY_FOLIAGE = (163, 117, 70)  # dry_foliage.png @ (50,173) = #A37546
+_PLAINS_WATER = (63, 118, 228)      # vanilla default water color 0x3F76E4
+
+# Block -> plains RGB tint. Faces whose model JSON declares tintindex >= 0
+# get their per-face texture multiplied by this. Blocks not listed here get
+# NO tint even when their model declares tintindex (default-deny — mirrors
+# vanilla, where cherry/pale-oak leaves etc. have no color provider and
+# stay white). Redstone dust / melon-pumpkin stems also declare tintindex
+# but use power/age-based tints, not biome tints: deliberately excluded.
+_TINT_TABLE: dict[str, tuple[int, int, int]] = {
+    # grass colormap
+    "minecraft:grass_block": _PLAINS_GRASS,
+    "minecraft:short_grass": _PLAINS_GRASS,
+    "minecraft:tall_grass": _PLAINS_GRASS,
+    "minecraft:fern": _PLAINS_GRASS,
+    "minecraft:large_fern": _PLAINS_GRASS,
+    "minecraft:potted_fern": _PLAINS_GRASS,
+    "minecraft:sugar_cane": _PLAINS_GRASS,   # medium confidence
+    "minecraft:bush": _PLAINS_GRASS,         # medium confidence
+    "minecraft:wildflowers": _PLAINS_GRASS,  # medium-high confidence
+    "minecraft:pink_petals": _PLAINS_GRASS,  # medium-high confidence
+    "minecraft:bamboo": _PLAINS_GRASS,       # medium confidence; note the
+                                             # fast-tier limitation below
+    # foliage colormap
+    "minecraft:oak_leaves": _PLAINS_FOLIAGE,
+    "minecraft:jungle_leaves": _PLAINS_FOLIAGE,
+    "minecraft:acacia_leaves": _PLAINS_FOLIAGE,
+    "minecraft:dark_oak_leaves": _PLAINS_FOLIAGE,
+    "minecraft:mangrove_leaves": _PLAINS_FOLIAGE,
+    "minecraft:vine": _PLAINS_FOLIAGE,       # medium-high confidence
+    # dry-foliage colormap
+    "minecraft:leaf_litter": _PLAINS_DRY_FOLIAGE,  # medium confidence
+    # fixed tints (non-biome)
+    "minecraft:birch_leaves": (128, 167, 85),   # #80A755
+    "minecraft:spruce_leaves": (97, 153, 97),   # #619961
+    "minecraft:lily_pad": (32, 128, 48),        # #208030
+}
+
+
+def _tint_image(img: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
+    """Multiply RGB channels by rgb/255; alpha untouched. Returns a NEW image.
+
+    The input is never mutated (mirrors _shade_image's split/merge structure).
+    """
+    tr, tg, tb = (m / 255.0 for m in rgb)
+    if img.mode == "RGBA":
+        r, g, b, a = img.split()
+        tinted = [c.point(lambda v, m=m: min(255, int(v * m)))
+                  for c, m in ((r, tr), (g, tg), (b, tb))]
+        return Image.merge("RGBA", (*tinted, a))
+    r, g, b = img.split()
+    tinted = [c.point(lambda v, m=m: min(255, int(v * m)))
+              for c, m in ((r, tr), (g, tg), (b, tb))]
+    return Image.merge("RGB", tinted)
 
 
 def _fallback_color(block_name: str) -> tuple[int, int, int]:
@@ -547,10 +639,12 @@ def _build_face_textures(block: str, assets_root,
                          fallback_blocks: set) -> dict[str, Image.Image | None]:
     """Per-face PIL textures for one palette entry (with fallback colors)."""
     name, props = _split_blockstate(block)
-    images, parent_leaf = ({}, None)
+    images, parent_leaf, tinted_vars = ({}, None, set())
     if assets_root is not None:
-        images, parent_leaf = _resolve_model_textures(name, props, assets_root)
+        images, parent_leaf, tinted_vars = _resolve_model_textures(
+            name, props, assets_root)
     face_vars = _face_tex_vars(images, parent_leaf)
+    tint = _TINT_TABLE.get(name)
     out: dict[str, Image.Image | None] = {}
     for face, _, _ in _FACES:
         var = face_vars.get(face)
@@ -558,6 +652,10 @@ def _build_face_textures(block: str, assets_root,
         if img is None:
             fallback_blocks.add(name)
             img = Image.new("RGB", (16, 16), _fallback_color(name))
+        elif var in tinted_vars and tint is not None:
+            # Biome tint applies to real textures only — missing-texture
+            # flat colors stay untinted as a debug signal.
+            img = _tint_image(img, tint)
         out[face] = img
     return out
 
