@@ -290,7 +290,9 @@ def test_fast_fluid_no_warning(tmp_path):
     assets = make_assets(tmp_path)
     fb: set = set()
     faces = _build_face_textures("minecraft:water", assets, fb)
-    assert faces["north"].getpixel((0, 0)) == (52, 120, 235)
+    # gap1 biome tint moved fast-tier water to vanilla's default water
+    # color 0x3F76E4 (was the older (52, 120, 235) flat approximation).
+    assert faces["north"].getpixel((0, 0)) == (63, 118, 228)
     faces = _build_face_textures("minecraft:lava", assets, fb)
     assert faces["north"].getpixel((0, 0)) == (255, 110, 20)
     assert "minecraft:water" not in fb
