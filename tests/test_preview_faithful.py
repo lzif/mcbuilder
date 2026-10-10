@@ -529,3 +529,282 @@ def test_fluid_quads_deterministic():
     for (o1, n1, _i1), (o2, n2, _i2) in zip(first, second):
         assert n1 == n2
         assert o1 == o2
+
+
+# block-entity approximations (gap4): chest / banner families + sign defaults
+# ---------------------------------------------------------------------------
+
+def _mean_rgb(tex):
+    d = list(tex.getdata())
+    n = len(d)
+    return tuple(sum(p[i] for p in d) // n for i in range(3))
+
+
+def _latch_quads(quads):
+    """Latch box quads: narrow horizontal footprint, y in 11/16..15/16."""
+    out = []
+    for q in quads:
+        pts = q[0]
+        if not all(11 / 16 - 1e-6 <= p[1] <= 15 / 16 + 1e-6 for p in pts):
+            continue
+        if max(p[0] for p in pts) - min(p[0] for p in pts) > 3 / 16 + 1e-6:
+            continue
+        if max(p[2] for p in pts) - min(p[2] for p in pts) > 3 / 16 + 1e-6:
+            continue
+        out.append(q)
+    return out
+
+
+def _centroid(quads):
+    xs = sum(p[0] for q in quads for p in q[0])
+    ys = sum(p[1] for q in quads for p in q[0])
+    zs = sum(p[2] for q in quads for p in q[0])
+    n = sum(len(q[0]) for q in quads)
+    return (xs / n, ys / n, zs / n)
+
+
+@needs_real_assets
+def test_chest_not_fallback():
+    """Chest renders as 18 textured quads (body 6 + lid 6 + latch 6)."""
+    tex_cache: dict = {}
+    for canonical in ("minecraft:chest", "minecraft:chest[facing=east]"):
+        quads, fb = pf.resolve_block_quads(canonical, _REAL_ROOT, tex_cache,
+                                           set())
+        assert not fb, canonical
+        assert len(quads) >= 15, (canonical, len(quads))
+        # Textured entity quads — never the flat 16×16 fallback cube.
+        assert all(q[2].size != (16, 16) for q in quads), canonical
+        assert all(q[2].mode in ("RGB", "RGBA") for q in quads), canonical
+
+
+@needs_real_assets
+def test_chest_lid_above_body():
+    tex_cache: dict = {}
+    quads, fb = pf.resolve_block_quads("minecraft:chest", _REAL_ROOT,
+                                       tex_cache, set())
+    assert not fb
+    body = [q for q in quads if _centroid([q])[1] < 0.6]
+    lid = [q for q in quads if _centroid([q])[1] >= 0.6]
+    assert body and lid
+    assert all(p[1] <= 0.63 for q in body for p in q[0])
+    assert all(p[1] >= 0.62 for q in lid for p in q[0])
+    body_max_y = max(p[1] for q in body for p in q[0])
+    lid_min_y = min(p[1] for q in lid for p in q[0])
+    assert body_max_y == pytest.approx(10 / 16, abs=0.01)
+    assert lid_min_y == pytest.approx(10 / 16, abs=0.01)
+
+
+@needs_real_assets
+def test_chest_facing_rotates_latch():
+    """Direction-trust: the latch sits on the facing side, every facing."""
+    tex_cache: dict = {}
+    for facing, check in (("north", lambda x, z: z < 0.25),
+                          ("east", lambda x, z: x > 0.75),
+                          ("south", lambda x, z: z > 0.75),
+                          ("west", lambda x, z: x < 0.25)):
+        quads, fb = pf.resolve_block_quads(
+            f"minecraft:chest[facing={facing}]", _REAL_ROOT, tex_cache, set())
+        assert not fb, facing
+        latch = _latch_quads(quads)
+        assert len(latch) == 6, (facing, len(latch))
+        cx, _, cz = _centroid(latch)
+        assert check(cx, cz), (facing, cx, cz)
+
+
+@needs_real_assets
+def test_chest_textures_per_variant():
+    """Each chest variant resolves to its own entity texture."""
+    tex_cache: dict = {}
+    means = {}
+    for name in ("minecraft:chest", "minecraft:trapped_chest",
+                 "minecraft:ender_chest", "minecraft:copper_chest",
+                 "minecraft:exposed_copper_chest",
+                 "minecraft:weathered_copper_chest",
+                 "minecraft:oxidized_copper_chest",
+                 "minecraft:waxed_copper_chest"):
+        quads, fb = pf.resolve_block_quads(name, _REAL_ROOT, tex_cache,
+                                           set())
+        assert not fb, name
+        assert len(quads) >= 15, (name, len(quads))
+        # Overall mean color across the textured quads.
+        rs = gs = bs = n = 0
+        for _, _, tex in quads:
+            for p in tex.getdata():
+                rs += p[0]
+                gs += p[1]
+                bs += p[2]
+                n += 1
+        means[name] = (rs // n, gs // n, bs // n)
+    # The variants resolve to genuinely different textures (normal vs
+    # trapped differ in only 28/4096 texels — a subtle vanilla reddening
+    # — so the hue check uses ender/copper, which are visibly distinct).
+    for other in ("minecraft:ender_chest", "minecraft:copper_chest"):
+        dist = sum(abs(a - b) for a, b in
+                   zip(means["minecraft:chest"], means[other]))
+        assert dist > 15, (other, means)
+
+
+def test_chest_missing_entity_texture_falls_back(assets_root, tex_cache):
+    """No textures/entity/ in the cache → graceful degradation.
+
+    chest → the wooden box (intentional, no fallback warning);
+    trapped_chest → magenta fallback cube.
+    """
+    quads, fb = pf.resolve_block_quads("minecraft:chest", assets_root,
+                                       tex_cache, set())
+    assert not fb
+    assert len(quads) == 6
+    assert all(q[2].size == (16, 16) for q in quads)
+    assert _mean_rgb(quads[0][2]) == (181, 140, 82)
+
+    quads, fb = pf.resolve_block_quads("minecraft:trapped_chest",
+                                       assets_root, tex_cache, set())
+    assert fb
+    assert len(quads) == 6
+    assert _mean_rgb(quads[0][2]) == (205, 70, 205)
+
+
+def test_chest_missing_entity_texture_assets_root_none(tex_cache):
+    """assets_root=None skips the entity hook (guard) — same fallbacks."""
+    quads, fb = pf.resolve_block_quads("minecraft:chest", None, tex_cache,
+                                       set())
+    assert not fb
+    assert len(quads) == 6
+    assert _mean_rgb(quads[0][2]) == (181, 140, 82)
+
+    quads, fb = pf.resolve_block_quads("minecraft:trapped_chest", None,
+                                       tex_cache, set())
+    assert fb
+    assert len(quads) == 6
+
+
+@needs_real_assets
+def test_banner_not_fallback():
+    tex_cache: dict = {}
+    quads, fb = pf.resolve_block_quads("minecraft:red_banner", _REAL_ROOT,
+                                       tex_cache, set())
+    assert not fb
+    assert len(quads) >= 10, len(quads)
+    assert all(q[2].size != (16, 16) for q in quads)
+
+    quads, fb = pf.resolve_block_quads(
+        "minecraft:white_wall_banner[facing=east]", _REAL_ROOT, tex_cache,
+        set())
+    assert not fb
+    assert len(quads) >= 10, len(quads)
+
+
+@needs_real_assets
+def test_banner_cloth_tint():
+    """Cloth is tinted by the banner's dye color (white base multiplies)."""
+    tex_cache: dict = {}
+
+    def cloth_front_mean(canonical):
+        quads, fb = pf.resolve_block_quads(canonical, _REAL_ROOT, tex_cache,
+                                           set())
+        assert not fb
+        fronts = [q for q in quads if q[2].size == (22, 41)]
+        assert len(fronts) == 1, (canonical, len(fronts))
+        assert tuple(fronts[0][1]) == (0.0, 0.0, 1.0), fronts[0][1]
+        return _mean_rgb(fronts[0][2])
+
+    r, g, b = cloth_front_mean("minecraft:red_banner[rotation=0]")
+    assert r > 100 and r > g + 30 and r > b + 30, (r, g, b)
+
+    r, g, b = cloth_front_mean("minecraft:white_banner[rotation=0]")
+    assert r > 150 and g > 150 and b > 150, (r, g, b)
+    assert max(r, g, b) - min(r, g, b) < 30, (r, g, b)
+
+
+@needs_real_assets
+def test_banner_standing_rotation():
+    """Direction-trust: rotation spins the cloth (22.5° steps)."""
+    tex_cache: dict = {}
+    for rotation, expected in ((0, (0.0, 0.0, 1.0)),
+                               (4, (-1.0, 0.0, 0.0)),
+                               (8, (0.0, 0.0, -1.0))):
+        quads, fb = pf.resolve_block_quads(
+            f"minecraft:red_banner[rotation={rotation}]", _REAL_ROOT,
+            tex_cache, set())
+        assert not fb, rotation
+        fronts = [q for q in quads if q[2].size == (22, 41)]
+        assert len(fronts) == 1, (rotation, len(fronts))
+        n = tuple(fronts[0][1])
+        assert n == pytest.approx(expected, abs=1e-6), (rotation, n)
+        # Corner centroids: the cloth front sits on the facing side.
+        cx, _, cz = _centroid(fronts)
+        if rotation == 0:
+            assert cz > 0.5, (rotation, cz)
+        elif rotation == 4:
+            assert cx < 0.5, (rotation, cx)
+        elif rotation == 8:
+            assert cz < 0.5, (rotation, cz)
+
+
+@needs_real_assets
+def test_wall_banner_facing():
+    """Direction-trust: cloth hangs on the wall opposite the facing."""
+    tex_cache: dict = {}
+    for facing, normal, wall_check in (
+            ("south", (0.0, 0.0, 1.0), lambda x, z: z < 0.25),
+            ("west", (-1.0, 0.0, 0.0), lambda x, z: x > 0.75),
+            ("north", (0.0, 0.0, -1.0), lambda x, z: z > 0.75),
+            ("east", (1.0, 0.0, 0.0), lambda x, z: x < 0.25)):
+        quads, fb = pf.resolve_block_quads(
+            f"minecraft:white_wall_banner[facing={facing}]", _REAL_ROOT,
+            tex_cache, set())
+        assert not fb, facing
+        cloth = [q for q in quads
+                 if q[2].size in ((22, 41), (20, 41), (2, 41), (22, 2))]
+        assert len(cloth) == 6, (facing, len(cloth))
+        cx, _, cz = _centroid(cloth)
+        assert wall_check(cx, cz), (facing, cx, cz)
+        fronts = [q for q in cloth if q[2].size == (22, 41)]
+        assert len(fronts) == 1, (facing, len(fronts))
+        assert tuple(fronts[0][1]) == pytest.approx(normal, abs=1e-6), \
+            (facing, fronts[0][1])
+
+
+@needs_real_assets
+def test_sign_bare_resolves():
+    """Bare signs resolve via the new _DEFAULT_PROPS (rotation/attached)."""
+    tex_cache: dict = {}
+    for canonical, min_quads in (("minecraft:oak_sign", 6),
+                                 ("minecraft:oak_hanging_sign", 6)):
+        quads, fb = pf.resolve_block_quads(canonical, _REAL_ROOT, tex_cache,
+                                           set())
+        assert not fb, canonical
+        assert len(quads) >= min_quads, (canonical, len(quads))
+
+
+@needs_real_assets
+def test_sign_board_faces_facing():
+    """oak_wall_sign[facing=east]: the board's front face points +X."""
+    tex_cache: dict = {}
+    quads, fb = pf.resolve_block_quads(
+        "minecraft:oak_wall_sign[facing=east]", _REAL_ROOT, tex_cache, set())
+    assert not fb
+    boards = [q for q in quads if q[2].size == (24, 12)]
+    assert len(boards) == 2, len(boards)  # front + back
+    front = next(q for q in boards if tuple(q[1]) == (1.0, 0.0, 0.0))
+    back = next(q for q in boards if tuple(q[1]) == (-1.0, 0.0, 0.0))
+    assert _centroid([front])[0] > _centroid([back])[0]
+    # Real sign texture, not the magenta fallback.
+    assert _mean_rgb(front[2]) != (205, 70, 205)
+
+
+def test_rot_y_degrees_matches_rot_y():
+    """_rot_y_degrees ≡ _rot_y applied d/90 times at 90° multiples."""
+    pts = [(0.0, 0.0, 0.0), (1.0, 0.5, 0.5), (0.3, 0.7, 0.9),
+           (0.5, 0.5, 0.0), (0.25, 1.0, 0.75)]
+    for d in (0, 90, 180, 270):
+        for p in pts:
+            q = p
+            for _ in range(d // 90):
+                q = pf._rot_y(q, 90)
+            r = pf._rot_y_degrees(p, d)
+            assert r == pytest.approx(q, abs=1e-9), (d, p, q, r)
+    # 45°: halfway between 0° and 90° (sanity on the continuous path).
+    r = pf._rot_y_degrees((1.0, 0.5, 0.5), 45)
+    assert r == pytest.approx((0.5 + 0.5 * 2 ** 0.5 / 2, 0.5,
+                               0.5 + 0.5 * 2 ** 0.5 / 2), abs=1e-9)

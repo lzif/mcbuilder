@@ -47,7 +47,14 @@ _CLIENT_PREFIXES = (
     "assets/minecraft/textures/block/",
     "assets/minecraft/models/block/",
     "assets/minecraft/blockstates/",
+    "assets/minecraft/textures/entity/",
 )
+# NOTE (2026-10-10): fetch is idempotent — it returns early when
+# blockstates/ is already populated, so caches created BEFORE a prefix
+# was added here will NOT gain the new textures until the cache dir is
+# deleted and re-fetched. The renderers degrade gracefully when entity
+# textures are absent (wooden-box chest / magenta fallback / flat
+# fast-tier colors), so this only affects fidelity, not correctness.
 
 
 def _http_get(url: str, timeout: int = 120) -> tuple[int, bytes]:

@@ -602,22 +602,19 @@ _FLUID_RGBA = {
     "minecraft:chest": (181, 140, 82, 255),
 }
 
-#: Vanilla fluid surface height for a still fluid cell with no same
-#: fluid above: exactly 8/9 (verified against the decompiled Java
-#: 1.21.4 client). Applies uniformly to water and lava (shared fluid
-#: renderer, fluid-agnostic) and regardless of level — the still-only
-#: scope; per-corner flowing heights from neighbor averaging are a
-#: future refinement.
+#: Still-fluid surface height: exactly 8/9 ≈ 0.8888889 (measured from the
+#: official Java client — a source block's fluid amount 8 renders at 8/9).
+#: Applies to both water and lava: vanilla runs both through the same
+#: fluid renderer operating on FluidState (fluid-agnostic).
 _FLUID_SURFACE_HEIGHT = 8.0 / 9.0
-
 
 def _fluid_cube_quads(rgba, top_height: float = 1.0):
     """Translucent fluid cube: 6 shaded RGBA quads (alpha preserved).
 
-    Only the "up" face's corners are lowered to ``top_height``; the
-    side faces intentionally stay full-height (vanilla clips them at
-    the surface, which needs neighbor context the per-block quad
-    path does not have).
+    ``top_height`` lowers only the up face's top corners (still fluids sit
+    at 8/9). Side faces span the full 0..1: vanilla clips them
+    per-neighbor, but the per-palette quad cache has no neighbor context —
+    documented approximation.
     """
     r, g, b, a = rgba
     quads = []
@@ -637,6 +634,312 @@ def _fluid_cube_quads(rgba, top_height: float = 1.0):
     return quads
 
 
+# ---------------------------------------------------------------------------
+# block-entity approximations (faithful tier)
+# ---------------------------------------------------------------------------
+# Chests and banners are block entities: vanilla ships no JSON model with
+# elements for them, so the renderer approximates them from their entity
+# textures (textures/entity/chest/*.png,
+# textures/entity/banner/banner_base.png). UV regions below were measured
+# from the real 26.2 PNGs (2026-10-10):
+# - chest normal.png 64×64: lid band y0-18, body band y19-42, latch opaque
+#   bbox (0,0)-(6,5) (metallic gray, mean 153).
+# - banner_base.png 64×64: cloth panels (0,0)-(22,41) front / (22,0)-(42,41)
+#   back (near-white, mean 241/225 — tintable), pole strip (44,0)-(52,42)
+#   = 4 sides × 2px, bar strip (0,42)-(44,46).
+# NOTE on the chest "front" side: the vanilla chest texture's front regions
+# (body/lid front + latch) belong on the latch side of the block. The
+# canonical orientation here puts the latch on the NORTH face (facing
+# north, 0°), so the texture-front regions are painted on the north face —
+# i.e. the vanilla unrotated model frame's +Z, rotated into the facing-
+# north canonical frame.
+
+#: Block name → entity texture rel (for _load_texture_image). Waxed copper
+#: chests share their unwaxed stage's texture.
+_ENTITY_TEXTURES = {
+    "minecraft:chest": "entity/chest/normal",
+    "minecraft:trapped_chest": "entity/chest/trapped",
+    "minecraft:ender_chest": "entity/chest/ender",
+    "minecraft:copper_chest": "entity/chest/copper",
+    "minecraft:exposed_copper_chest": "entity/chest/copper_exposed",
+    "minecraft:weathered_copper_chest": "entity/chest/copper_weathered",
+    "minecraft:oxidized_copper_chest": "entity/chest/copper_oxidized",
+    "minecraft:waxed_copper_chest": "entity/chest/copper",
+    "minecraft:waxed_exposed_copper_chest": "entity/chest/copper_exposed",
+    "minecraft:waxed_weathered_copper_chest": "entity/chest/copper_weathered",
+    "minecraft:waxed_oxidized_copper_chest": "entity/chest/copper_oxidized",
+}
+
+#: Vanilla dye palette (long-stable; the white cloth base multiplies
+#: cleanly into every dye color).
+_DYE_RGB = {
+    "white": (249, 255, 254),
+    "orange": (249, 128, 29),
+    "magenta": (199, 78, 189),
+    "light_blue": (58, 179, 218),
+    "yellow": (254, 216, 61),
+    "lime": (128, 199, 31),
+    "pink": (243, 139, 170),
+    "gray": (71, 79, 82),
+    "light_gray": (157, 157, 151),
+    "cyan": (22, 156, 156),
+    "purple": (137, 50, 184),
+    "blue": (60, 68, 170),
+    "brown": (131, 84, 50),
+    "green": (94, 124, 22),
+    "red": (176, 46, 38),
+    "black": (29, 29, 33),
+}
+
+#: Chest part UVs, measured from the real 26.2 chest PNGs. Canonical front
+#: (latch side) is the NORTH face (see the module note above).
+_CHEST_BODY_UVS = {
+    "north": (14, 33, 28, 43),  # front (latch side)
+    "south": (42, 33, 56, 43),  # back
+    "east": (28, 33, 42, 43),   # left (+X)
+    "west": (0, 33, 14, 43),    # right (−X)
+    "up": (14, 19, 28, 33),
+    "down": (28, 19, 42, 33),
+}
+_CHEST_LID_UVS = {
+    "north": (14, 14, 28, 19),
+    "south": (42, 14, 56, 19),
+    "east": (28, 14, 42, 19),
+    "west": (0, 14, 14, 19),
+    "up": (14, 0, 28, 14),
+    "down": (28, 0, 42, 14),
+}
+_CHEST_LATCH_UV = (0, 0, 6, 5)  # measured opaque bbox (all latch faces)
+
+_FACING_Y_ROT = {"north": 0, "east": 90, "south": 180, "west": 270}
+_WALL_BANNER_Y_ROT = {"south": 0, "west": 90, "north": 180, "east": 270}
+
+
+def _rot_y_degrees(p, degrees):
+    """Continuous _rot_y: Y rotation, clockwise viewed from above.
+
+    Matches _rot_y exactly at 90° multiples (pinned by test); used for
+    standing-banner ``rotation`` (22.5° steps).
+    """
+    theta = math.radians(degrees)
+    c, s = math.cos(theta), math.sin(theta)
+    x, y, z = p
+    vx, vz = x - 0.5, z - 0.5
+    return (0.5 + c * vx - s * vz, y, 0.5 + s * vx + c * vz)
+
+
+def _rot_y_degrees_dir(v, degrees):
+    """Direction-vector twin of _rot_y_degrees (no center offset)."""
+    theta = math.radians(degrees)
+    c, s = math.cos(theta), math.sin(theta)
+    vx, vy, vz = v
+    return (c * vx - s * vz, vy, s * vx + c * vz)
+
+
+def _entity_box_quads(f, t, face_uvs, img):
+    """One textured box from an entity PNG, in canonical orientation.
+
+    f, t: block-local 0–1 box corners; face_uvs: face -> (x0,y0,x1,y1)
+    pixel rect. Returns [(ordered_points, canonical_normal, crop)] —
+    crops are UNSHADED here; the caller rotates points+normals to the
+    final orientation and shades for the world normal (painted-on UVs,
+    world-space shading — the same rule as the model path). Faces absent
+    from face_uvs are skipped (e.g. the pole's bottom).
+    """
+    quads = []
+    for face_name, (x0, y0, x1, y1) in face_uvs.items():
+        if face_name not in _FACE_NORMALS:
+            continue
+        corners = _face_base_corners(face_name, f, t)
+        ordered = _order_corners_uv(corners, face_name)
+        crop = img.crop((x0, y0, x1, y1))
+        if crop.size[0] < 1 or crop.size[1] < 1:
+            continue
+        quads.append((ordered, _FACE_NORMALS[face_name], crop))
+    return quads
+
+
+def _finalize_entity_quads(quads, degrees, continuous=False):
+    """Rotate entity quads to their final orientation + world-space shade.
+
+    90° steps use _rot_y/_rot_y_dir; arbitrary angles use
+    _rot_y_degrees with _snap_normal'd normals (shade 0.75 fallback for
+    non-axis normals — same as diagonal sign boards today).
+    """
+    out = []
+    for pts, n, crop in quads:
+        if continuous:
+            pts2 = [_rot_y_degrees(p, degrees) for p in pts]
+            n2 = _snap_normal(_rot_y_degrees_dir(n, degrees))
+        else:
+            pts2 = [_rot_y(p, degrees) for p in pts]
+            n2 = _snap_normal(_rot_y_dir(n, degrees))
+        out.append((pts2, n2, _shade_image(crop, _SHADES.get(n2, 0.75))))
+    return out
+
+
+def _fill_transparent_corners(img, corners):
+    """Fill fully-transparent texels with their opaque neighbor's color.
+
+    Vanilla entity textures have rounded corners (isolated transparent
+    texels); our crops would otherwise carry 1-texel pinholes.
+    """
+    d = ImageDraw.Draw(img)
+    for x, y in corners:
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if 0 <= nx < img.size[0] and 0 <= ny < img.size[1]:
+                r, g, b, a = img.getpixel((nx, ny))
+                if a == 255:
+                    d.point((x, y), fill=(r, g, b, 255))
+                    break
+
+
+def _chest_quads(props, img):
+    """Single-chest approximation: body + lid + latch boxes.
+
+    Canonical latch on the north face; ``facing`` rotates clockwise
+    viewed from above ({north:0, east:90, south:180, west:270}).
+    """
+    if img.size != (64, 64):
+        return None
+    # The latch unwrap has two fully-transparent corner texels ((0,0) and
+    # (5,0) — rounded corners in the vanilla texture); fill them from
+    # their opaque neighbors so no pinhole shows on the latch corners.
+    img = img.copy()
+    _fill_transparent_corners(img, [(0, 0), (5, 0)])
+    parts = _entity_box_quads(
+        (1 / 16, 0.0, 1 / 16), (15 / 16, 10 / 16, 15 / 16),
+        _CHEST_BODY_UVS, img)
+    parts += _entity_box_quads(
+        (1 / 16, 10 / 16, 1 / 16), (15 / 16, 15 / 16, 15 / 16),
+        _CHEST_LID_UVS, img)
+    latch_uvs = {face: _CHEST_LATCH_UV for face in _FACE_NAMES}
+    parts += _entity_box_quads(
+        (7 / 16, 11 / 16, 0.0), (9 / 16, 15 / 16, 1 / 16),
+        latch_uvs, img)
+    degrees = _FACING_Y_ROT.get(props.get("facing", "north"), 0)
+    return _finalize_entity_quads(parts, degrees)
+
+
+def _tint_rgb(img, rgb):
+    """Multiply RGB channels by rgb/255 (white base → dye color)."""
+    r, g, b = rgb
+    if img.mode == "RGBA":
+        cr, cg, cb, ca = img.split()
+        tinted = [ch.point(lambda v, k=k: v * k // 255)
+                  for ch, k in ((cr, r), (cg, g), (cb, b))]
+        return Image.merge("RGBA", (*tinted, ca))
+    cr, cg, cb = img.split()
+    return Image.merge("RGB", [ch.point(lambda v, k=k: v * k // 255)
+                               for ch, k in ((cr, r), (cg, g), (cb, b))])
+
+
+def _banner_quads(props, img, dye_rgb, wall):
+    """Banner approximation: pole + crossbar + tinted hanging cloth.
+
+    Standing banners face south canonically; ``rotation`` (0–15) spins
+    them in 22.5° steps. Wall banners hang on the wall opposite their
+    ``facing`` (verified against oak_wall_sign's y-rotations:
+    {south:0, west:90, north:180, east:270}). No pattern layers — only the
+    base dye color (stated limitation).
+    """
+    if img.size != (64, 64):
+        return None
+    # Tint the cloth panels in a working copy; pole/bar stay wood.
+    panel = img.copy()
+    panel.paste(_tint_rgb(img.crop((0, 0, 22, 41)), dye_rgb), (0, 0))
+    panel.paste(_tint_rgb(img.crop((22, 0, 42, 41)), dye_rgb), (22, 0))
+    # Rounded transparent corner texels in the vanilla panels ((0,0) and
+    # (41,0)); fill from the tinted neighbors to avoid pinholes.
+    _fill_transparent_corners(panel, [(0, 0), (41, 0)])
+    quads = []
+    if not wall:
+        # Pole (2×14×2); bottom face skipped (sits on the ground).
+        pole_uvs = {
+            "north": (44, 2, 46, 42),
+            "south": (46, 2, 48, 42),
+            "east": (48, 2, 50, 42),
+            "west": (50, 2, 52, 42),
+            "up": (46, 0, 48, 2),  # (44,0)-(46,2) has transparent corners
+        }
+        quads += _entity_box_quads(
+            (7 / 16, 0.0, 7 / 16), (9 / 16, 14 / 16, 9 / 16),
+            pole_uvs, img)
+    # Crossbar (20×2×2); wood crops from the bar strip (approximate).
+    # The strip's end columns (x 0-1, 42-43) have transparent corners, so
+    # the bar ends sample just inside them.
+    bar_uvs = {
+        "north": (12, 42, 32, 44),
+        "south": (12, 42, 32, 44),
+        "east": (2, 42, 4, 44),
+        "west": (40, 42, 42, 44),
+        "up": (12, 42, 32, 44),
+        "down": (12, 42, 32, 44),
+    }
+    if wall:
+        quads += _entity_box_quads(
+            (-2 / 16, 12 / 16, 0.0), (18 / 16, 14 / 16, 2 / 16),
+            bar_uvs, img)
+        cloth_f = (-2 / 16, 2 / 16, 0.5 / 16)
+        cloth_t = (18 / 16, 12 / 16, 1.5 / 16)
+    else:
+        quads += _entity_box_quads(
+            (-2 / 16, 12 / 16, 7 / 16), (18 / 16, 14 / 16, 9 / 16),
+            bar_uvs, img)
+        cloth_f = (-2 / 16, 2 / 16, 7.5 / 16)
+        cloth_t = (18 / 16, 12 / 16, 8.5 / 16)
+    # Cloth (20×10×1); thin edges sample the tinted panel's edge columns.
+    cloth_uvs = {
+        "south": (0, 0, 22, 41),    # front
+        "north": (22, 0, 42, 41),   # back
+        "east": (20, 0, 22, 41),
+        "west": (0, 0, 2, 41),
+        "up": (0, 0, 22, 2),
+        "down": (0, 39, 22, 41),
+    }
+    quads += _entity_box_quads(cloth_f, cloth_t, cloth_uvs, panel)
+    if wall:
+        degrees = _WALL_BANNER_Y_ROT.get(props.get("facing", "north"), 0)
+        return _finalize_entity_quads(quads, degrees)
+    try:
+        rotation = int(props.get("rotation", "0"))
+    except (TypeError, ValueError):
+        rotation = 0
+    return _finalize_entity_quads(quads, (rotation % 16) * 22.5,
+                                  continuous=True)
+
+
+def _try_entity_quads(name, props, root, tex_cache):
+    """Textured block-entity approximations (chest / banner families).
+
+    Returns a quad list, or None when the block isn't entity-approximated
+    or its entity texture failed to load (missing file, wrong size). None
+    means the caller falls through to the existing behavior: chest →
+    wooden box, trapped/ender/copper chests and banners → magenta cube.
+    """
+    if name in _ENTITY_TEXTURES:
+        img = _load_texture_image(root, _ENTITY_TEXTURES[name], tex_cache)
+        if img is None:
+            return None
+        return _chest_quads(props, img)
+    short = name.split(":", 1)[-1]
+    if short.endswith("_wall_banner"):
+        color = short[: -len("_wall_banner")]
+        wall = True
+    elif short.endswith("_banner"):
+        color = short[: -len("_banner")]
+        wall = False
+    else:
+        return None
+    dye = _DYE_RGB.get(color)
+    if dye is None:
+        return None
+    img = _load_texture_image(root, "entity/banner/banner_base", tex_cache)
+    if img is None:
+        return None
+    return _banner_quads(props, img, dye, wall)
+
+
 def resolve_block_quads(canonical: str, assets_root: Path | None,
                         tex_cache: dict, fallback_blocks: set | None = None):
     """Public helper: (quads, is_fallback) for one canonical block string."""
@@ -644,12 +947,18 @@ def resolve_block_quads(canonical: str, assets_root: Path | None,
     fallback_color = _FALLBACK_MAGENTA
     if fallback_blocks is None:
         fallback_blocks = set()
+    if assets_root is not None:
+        entity_quads = _try_entity_quads(name, props, assets_root, tex_cache)
+        if entity_quads is not None:
+            # Intentional approximation, not a missing model: no
+            # fallback warning.
+            return entity_quads, False
     if name in _FLUID_RGBA:
         # Intentionally styled (not a missing model): no fallback warning.
         # Only actual fluids get the lowered surface — the chest is a
         # wooden box, not a fluid, and stays at full height.
-        top_h = _FLUID_SURFACE_HEIGHT if name in (
-            "minecraft:water", "minecraft:lava") else 1.0
+        top_h = (_FLUID_SURFACE_HEIGHT
+                 if name in ("minecraft:water", "minecraft:lava") else 1.0)
         return _fluid_cube_quads(_FLUID_RGBA[name], top_height=top_h), False
     if assets_root is None:
         return _fallback_cube_quads(fallback_color), True
