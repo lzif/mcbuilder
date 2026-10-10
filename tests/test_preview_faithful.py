@@ -988,9 +988,29 @@ def test_ao_entity_classification(assets_root):
     matching the pre-gap4 render (magenta fallback cube -> occluding).
     Post-gap4 the hasattr guard activates: banners are thin cloth
     (non-occluding), the chest family is a near-full box (occluding).
+
+    The hermetic fake assets ship no entity textures, so the test
+    writes minimal 64x64 entity fakes first — without them the entity
+    hook returns None and both names correctly degrade to the magenta
+    fallback cube (occluding), which is the render-consistent answer
+    but not the path this test pins.
     """
     tc: dict = {}
     if hasattr(pf, "_try_entity_quads"):
+        # Minimal 64x64 entity fakes with vanilla-like transparent rounded
+        # corners (fully-opaque fakes would load as RGB and never exercise
+        # the corner-fill path).
+        ent = assets_root / "textures" / "entity"
+        (ent / "chest").mkdir(parents=True, exist_ok=True)
+        (ent / "banner").mkdir(parents=True, exist_ok=True)
+        trapped = Image.new("RGBA", (64, 64), (200, 200, 200, 255))
+        trapped.putpixel((0, 0), (0, 0, 0, 0))
+        trapped.putpixel((5, 0), (0, 0, 0, 0))
+        trapped.save(ent / "chest" / "trapped.png")
+        cloth = Image.new("RGBA", (64, 64), (240, 240, 240, 255))
+        cloth.putpixel((0, 0), (0, 0, 0, 0))
+        cloth.putpixel((41, 0), (0, 0, 0, 0))
+        cloth.save(ent / "banner" / "banner_base.png")
         assert pf._block_occludes_ao(
             "minecraft:trapped_chest", assets_root, tc) is True
         assert pf._block_occludes_ao(
