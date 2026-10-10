@@ -587,13 +587,28 @@ _FLUID_RGBA = {
     "minecraft:chest": (181, 140, 82, 255),
 }
 
+#: Vanilla fluid surface height for a still fluid cell with no same
+#: fluid above: exactly 8/9 (verified against the decompiled Java
+#: 1.21.4 client). Applies uniformly to water and lava (shared fluid
+#: renderer, fluid-agnostic) and regardless of level — the still-only
+#: scope; per-corner flowing heights from neighbor averaging are a
+#: future refinement.
+_FLUID_SURFACE_HEIGHT = 8.0 / 9.0
 
-def _fluid_cube_quads(rgba):
-    """Translucent fluid cube: 6 shaded RGBA quads (alpha preserved)."""
+
+def _fluid_cube_quads(rgba, top_height: float = 1.0):
+    """Translucent fluid cube: 6 shaded RGBA quads (alpha preserved).
+
+    Only the "up" face's corners are lowered to ``top_height``; the
+    side faces intentionally stay full-height (vanilla clips them at
+    the surface, which needs neighbor context the per-block quad
+    path does not have).
+    """
     r, g, b, a = rgba
     quads = []
-    f, t = (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
+    f = (0.0, 0.0, 0.0)
     for face_name in _FACE_NAMES:
+        t = (1.0, top_height if face_name == "up" else 1.0, 1.0)
         corners = _face_base_corners(face_name, f, t)
         ordered = _order_corners_uv(corners, face_name)
         n = _FACE_NORMALS[face_name]
@@ -616,7 +631,11 @@ def resolve_block_quads(canonical: str, assets_root: Path | None,
         fallback_blocks = set()
     if name in _FLUID_RGBA:
         # Intentionally styled (not a missing model): no fallback warning.
-        return _fluid_cube_quads(_FLUID_RGBA[name]), False
+        # Only actual fluids get the lowered surface — the chest is a
+        # wooden box, not a fluid, and stays at full height.
+        top_h = _FLUID_SURFACE_HEIGHT if name in (
+            "minecraft:water", "minecraft:lava") else 1.0
+        return _fluid_cube_quads(_FLUID_RGBA[name], top_height=top_h), False
     if assets_root is None:
         return _fallback_cube_quads(fallback_color), True
     quads = _resolve_block_quads(

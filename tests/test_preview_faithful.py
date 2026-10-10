@@ -553,3 +553,91 @@ def test_stair_row_notches_are_real_geometry(tmp_path, assets_root):
         f"faithful shows no inter-row notch (bg frac {faithful_bg:.3f})"
     assert trusted_bg > 0.05, \
         f"trusted shows no inter-row notch (bg frac {trusted_bg:.3f})"
+
+
+# ---------------------------------------------------------------------------
+# fluid surface height (gap 3)
+# ---------------------------------------------------------------------------
+
+H = pf._FLUID_SURFACE_HEIGHT
+
+
+def _quads_by_normal(canonical):
+    quads, fb = pf.resolve_block_quads(canonical, None, {}, set())
+    assert not fb, canonical
+    by_normal = {}
+    for ordered, n, img in quads:
+        by_normal[n] = (ordered, img)
+    return by_normal
+
+
+def test_water_top_face_at_fluid_surface_height():
+    by_normal = _quads_by_normal("minecraft:water")
+    ordered, _img = by_normal[(0, 1, 0)]
+    ys = [c[1] for c in ordered]
+    assert all(y == pytest.approx(H) for y in ys), ys
+    assert max(ys) < 1.0
+
+
+def test_water_side_faces_stay_full_height():
+    by_normal = _quads_by_normal("minecraft:water")
+    for n in ((0, 0, -1), (0, 0, 1), (-1, 0, 0), (1, 0, 0)):
+        ordered, _img = by_normal[n]
+        ys = [c[1] for c in ordered]
+        assert min(ys) == 0.0 and max(ys) == 1.0, (n, ys)
+    ordered, _img = by_normal[(0, -1, 0)]
+    assert all(c[1] == 0.0 for c in ordered)
+
+
+def test_lava_top_face_at_fluid_surface_height():
+    by_normal = _quads_by_normal("minecraft:lava")
+    ordered, _img = by_normal[(0, 1, 0)]
+    ys = [c[1] for c in ordered]
+    assert all(y == pytest.approx(H) for y in ys), ys
+    assert max(ys) < 1.0
+
+
+def test_chest_top_face_not_lowered():
+    # Chest shares the _FLUID_RGBA styling dict but is a wooden box,
+    # not a fluid — its top must stay at exactly 1.0.
+    by_normal = _quads_by_normal("minecraft:chest")
+    ordered, _img = by_normal[(0, 1, 0)]
+    assert all(c[1] == 1.0 for c in ordered)
+
+
+def test_flowing_water_uses_same_surface_height():
+    # Still-only scope: the fluid path ignores level, so flowing water
+    # also renders at 8/9 (documents the accepted approximation).
+    by_normal = _quads_by_normal("minecraft:water[level=1]")
+    ordered, _img = by_normal[(0, 1, 0)]
+    assert all(c[1] == pytest.approx(H) for c in ordered)
+
+
+def test_fluid_top_alpha_preserved():
+    water = _quads_by_normal("minecraft:water")[(0, 1, 0)][1]
+    lava = _quads_by_normal("minecraft:lava")[(0, 1, 0)][1]
+    for img, want in ((water, 150), (lava, 210)):
+        assert img.mode == "RGBA", img.mode
+        assert img.getpixel((8, 8))[3] == want
+
+
+def test_water_render_smoke(tmp_path, assets_root):
+    """One water block renders to PNG without exception."""
+    import mcbuilder as mb
+    with mb.Build(seed=1) as b:
+        b.set(0, 0, 0, "minecraft:stone")
+        b.set(0, 1, 0, "minecraft:water")
+    out = tmp_path / "fluid"
+    paths = b.render(out, views=["iso"], assets_dir=assets_root,
+                     tier="faithful", title="T")
+    assert len(paths) == 1 and paths[0].name == "iso.png"
+    assert paths[0].stat().st_size > 1000
+
+
+def test_fluid_quads_deterministic():
+    first, _ = pf.resolve_block_quads("minecraft:water", None, {}, set())
+    second, _ = pf.resolve_block_quads("minecraft:water", None, {}, set())
+    assert len(first) == len(second) == 6
+    for (o1, n1, _i1), (o2, n2, _i2) in zip(first, second):
+        assert n1 == n2
+        assert o1 == o2
