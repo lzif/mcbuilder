@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -108,6 +109,16 @@ _SHADES = {
     (1, 0, 0): 0.6,
     (-1, 0, 0): 0.6,
 }
+
+#: Per-AO-level brightness multipliers for levels (0, 1, 2, 3).
+#: Vanilla-derived approximation (NOT byte-verified from decompiled
+#: vanilla — a single tunable constant): the 0.4 floor is corroborated
+#: by the thelinuxseal/nanocraft commit (2026-09-26) "fix ambient
+#: occlusion treating air as solid"; the linear 0.2 steps are the
+#: standard reconstruction of vanilla's per-level ramp. Multiplies with
+#: _SHADES (shade stays baked into the cached texture palette-level;
+#: AO multiplies per-pixel at draw time: texel × shade × ao).
+_AO_BRIGHTNESS = (0.4, 0.6, 0.8, 1.0)
 
 _FACE_NORMALS = {
     "up": (0, 1, 0),
@@ -300,6 +311,147 @@ def _resolve_model_elements_and_textures(model_ref: str, root: Path,
         images[var] = _load_texture_image(
             root, target.split(":", 1)[-1], tex_cache)
     return elements, images
+
+
+# ---------------------------------------------------------------------------
+# smooth lighting: occlusion classification + per-vertex AO sampling
+# ---------------------------------------------------------------------------
+
+#: Blocks that never occlude AO even though their models fill the cube:
+#: translucent in vanilla, so they don't block skylight for neighbors.
+_AO_NON_OCCLUDING = frozenset({
+    "minecraft:ice",
+    "minecraft:slime_block",
+    "minecraft:honey_block",
+})
+
+
+def _block_occludes_ao(canonical: str, assets_root, tex_cache) -> bool:
+    """True iff the block's rendered shape fills its cell for AO purposes.
+
+    Mirrors ``resolve_block_quads``' dispatch order (fluid → entity →
+    model → fallback) so the classification always matches what is
+    actually rendered, whatever the merge order of the accuracy gaps.
+
+    Computed once per ``render()`` call per palette entry, then expanded
+    to a padded cell grid (out-of-bounds = air = non-occluding). Partial
+    blocks (stairs, slabs, walls, ...) are non-occluding at cell level —
+    they fail the full-cube test. Documented v0 simplification vs
+    vanilla (which samples sub-cell shapes): partial blocks don't *cast*
+    AO onto neighbors but still *receive* it.
+    """
+    name, props = _fast._split_blockstate(canonical)
+    if name == "minecraft:air":
+        return False
+    if name in _FLUID_RGBA:
+        # Water/lava: translucent cube. Chest: solid wooden-box stand-in.
+        return name == "minecraft:chest"
+    if assets_root is None:
+        return True  # magenta fallback cube
+    # Entity-approximation path (block-entities gap). Guarded by hasattr:
+    # pre-gap4 the function doesn't exist and this step is skipped
+    # entirely (banners/chests fall through to the model/fallback path,
+    # matching the pre-gap4 render).
+    _this_module = sys.modules[__name__]
+    if hasattr(_this_module, "_try_entity_quads"):
+        entity_quads = _this_module._try_entity_quads(
+            name, props, assets_root, tex_cache)
+        if entity_quads is not None:
+            # Banner-kind: thin cloth + pole + crossbar; nothing fills
+            # the cube. Chest family: near-full compound box.
+            return not name.endswith("_banner")
+        # None → fall through (entity texture missing → the render
+        # degrades identically to the model/fallback path below).
+    if name in _AO_NON_OCCLUDING:
+        return False
+    if name.endswith("leaves"):
+        # Vanilla treats leaves as opaque cubes for AO, even though the
+        # texture is transparent (explicit exception to the texture
+        # heuristic below).
+        return True
+    apps = _model_applications(name, props, assets_root)
+    if not apps:
+        return True  # fallback magenta cube
+    try:
+        covered = np.zeros((16, 16, 16), dtype=bool)
+        face_imgs = []
+        for model_ref, _x, _y, _uvlock in apps:
+            elements, images = _resolve_model_elements_and_textures(
+                model_ref, assets_root, tex_cache)
+            if not elements:
+                return True
+            for el in elements:
+                f = [max(0, min(16, int(round(c)))) for c in el["from"]]
+                t = [max(0, min(16, int(round(c)))) for c in el["to"]]
+                covered[f[0]:t[0], f[1]:t[1], f[2]:t[2]] = True
+                for face in el.get("faces", {}).values():
+                    var = (face.get("texture") or "").lstrip("#")
+                    face_imgs.append(images.get(var))
+        if not covered.all():
+            return False
+        # Every face texture must be opaque: None (missing → the
+        # renderer degrades that face to an OPAQUE flat color, so opaque
+        # is the render-consistent classification) or non-RGBA
+        # (_load_texture_image demotes fully-opaque RGBA to RGB, so RGBA
+        # ⟺ genuinely transparent pixels). Glass / stained glass are
+        # non-occluding automatically.
+        return all(img is None or img.mode != "RGBA" for img in face_imgs)
+    except (KeyError, TypeError, ValueError, IndexError):
+        # Corrupt element: the render degrades the whole block to the
+        # fallback cube → occluding, matching the render.
+        return True
+
+
+def _quad_ao_levels(v_locals, normal, cell, occ_padded):
+    """AO levels (0–3) for the 4 vertices of one quad, vectorized.
+
+    ``v_locals``: (4, 3) array of vertex positions minus the cell's
+    array coords (in [0, 1]; fractional allowed for partial blocks).
+    ``normal``: the face's axis-snapped world normal. ``cell``: (x, y, z)
+    array coords. ``occ_padded``: padded bool occlusion grid (+1 shift).
+
+    Sampling rule (vanilla): for each vertex, in the face-adjacent
+    layer, sample the two side cells and the corner cell (neighbor
+    offset per tangent axis: −1 at the low edge, +1 at the high edge,
+    0 for an interior vertex — which samples the cell directly outside
+    the vertex). level = 0 if (side1 and side2)
+    else 3 − (side1 + side2 + corner).
+    """
+    vl = np.asarray(v_locals, dtype=float)
+    n = tuple(normal)
+    ax = 0 if n[0] else (1 if n[1] else 2)
+    t1, t2 = [t for t in (0, 1, 2) if t != ax]
+    vt1 = vl[:, t1]
+    vt2 = vl[:, t2]
+    ot1 = np.where(vt1 <= 1e-9, -1, np.where(vt1 >= 1 - 1e-9, 1, 0))
+    ot2 = np.where(vt2 <= 1e-9, -1, np.where(vt2 >= 1 - 1e-9, 1, 0))
+    # Padded index of the face-adjacent cell.
+    base = np.array(cell, dtype=int) + np.array(n, dtype=int) + 1
+    e1 = np.zeros(3, dtype=int)
+    e1[t1] = 1
+    e2 = np.zeros(3, dtype=int)
+    e2[t2] = 1
+    i1 = base[None, :] + ot1[:, None] * e1[None, :]
+    i2 = base[None, :] + ot2[:, None] * e2[None, :]
+    ic = i1 + (i2 - base[None, :])
+    s1 = occ_padded[i1[:, 0], i1[:, 1], i1[:, 2]]
+    s2 = occ_padded[i2[:, 0], i2[:, 1], i2[:, 2]]
+    c = occ_padded[ic[:, 0], ic[:, 1], ic[:, 2]]
+    both = s1 & s2
+    return np.where(
+        both, 0,
+        3 - (s1.astype(np.int64) + s2.astype(np.int64)
+             + c.astype(np.int64)))
+
+
+def _vertex_ao_level(v_local, normal, cell, occ_padded) -> int:
+    """AO level (0–3) for one quad vertex. Canonical per-vertex sampler.
+
+    ``v_local``: vertex position minus the cell's array coords (in
+    [0, 1]; fractional allowed for partial blocks). See
+    ``_quad_ao_levels`` for the sampling rule.
+    """
+    return int(_quad_ao_levels([v_local], normal, cell, occ_padded)[0])
 
 
 def _when_matches(when, props: dict[str, str]) -> bool:
@@ -631,7 +783,8 @@ def resolve_block_quads(canonical: str, assets_root: Path | None,
 # drawing
 # ---------------------------------------------------------------------------
 
-def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image):
+def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image,
+                       ao=None):
     """Warp a texture across a quad. pts_uv: [(sx,sy,tx,ty)] ×4 in UV order.
 
     The UV order is [(u0,v0), (u0,v1), (u1,v1), (u1,v0)] which matches the
@@ -642,7 +795,23 @@ def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image):
     "top two / bottom two" reorder would twist diamonds (top faces in iso
     get their texture rotated 90°); the affine solve is exact for all
     convex quads.
+
+    ``ao``: optional 4 per-vertex brightness factors in ``pts_uv`` order
+    (smooth lighting). ``None`` — or all factors exactly 1.0 — renders
+    byte-identical to the pre-AO behavior (fast path: the brightness
+    pass is skipped entirely). Otherwise a single affine function is
+    fit to the 4 (sx, sy) → factor correspondences (exact: every quad is
+    an affine image of a planar rect, so screen quads are parallelograms
+    where affine ≡ bilinear), evaluated over the bbox, clipped to
+    [0, 1], and multiplied into the warped RGB only (alpha is
+    transparency, same reasoning as ``_shade_image``'s RGB-only
+    shading). ``.astype(np.uint8)`` truncation matches ``_shade_image``'s
+    ``int(v * factor)`` semantics. Vanilla's quad-diagonal flip is
+    deliberately skipped (no triangle split exists here); revisit only
+    if corner gradients look twisted.
     """
+    if ao is not None and all(a == 1.0 for a in ao):
+        ao = None
     # Skip degenerate quads (edge-on to the camera, e.g. a zero-thickness
     # bar seen side-on): the affine fit is ill-conditioned and the warp
     # would smear black across the bounding box. A real rasterizer draws
@@ -690,18 +859,36 @@ def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image):
     mask = Image.new("L", (bw, bh), 0)
     ImageDraw.Draw(mask).polygon(
         [(sx - x0, sy - y0) for sx, sy, _, _ in pts_uv], fill=255)
+    warped = tex_arr[_ty, _tx]
+    if ao is not None:
+        # Smooth lighting: affine brightness fit from the 4 vertex
+        # factors (screen coords relative to the bbox, matching _ox/_oy).
+        bsx = np.array([p[0] - x0 for p in pts_uv], dtype=float)
+        bsy = np.array([p[1] - y0 for p in pts_uv], dtype=float)
+        B = np.column_stack([bsx, bsy, np.ones(4)])
+        (ba, bb, bc), *_ = np.linalg.lstsq(
+            B, np.asarray(ao, dtype=float), rcond=None)
+        bright = np.clip(ba * _ox + bb * _oy + bc, 0.0, 1.0)
+        if tex.mode == "RGBA":
+            # RGB only — alpha is transparency, not brightness.
+            rgb = (warped[..., :3].astype(np.float32)
+                   * bright[..., None]).astype(np.uint8)
+            warped = np.dstack([rgb, warped[..., 3]])
+        else:
+            warped = (warped.astype(np.float32)
+                      * bright[..., None]).astype(np.uint8)
+    warped = warped.astype(np.uint8)
     if tex.mode == "RGBA":
         # Translucent quad (fluids): combine the quad-shape mask with the
         # texture alpha so the paste blends with what's behind it.
-        warped_rgba = tex_arr[_ty, _tx].astype(np.uint8)
+        warped_rgba = warped
         poly = np.array(mask).astype(np.float32) / 255.0
         eff = (poly * warped_rgba[..., 3].astype(np.float32)
                / 255.0 * 255.0).astype(np.uint8)
         canvas.paste(Image.fromarray(warped_rgba[..., :3], "RGB"),
                      (x0, y0), Image.fromarray(eff, "L"))
     else:
-        warped = Image.fromarray(tex_arr[_ty, _tx].astype(np.uint8), "RGB")
-        canvas.paste(warped, (x0, y0), mask)
+        canvas.paste(Image.fromarray(warped, "RGB"), (x0, y0), mask)
 
 
 def _soft_shadow_layer(W: int, H: int, proj_foot) -> Image.Image:
@@ -759,7 +946,8 @@ def _draw_debug_badge(img: Image.Image) -> None:
 # ---------------------------------------------------------------------------
 
 def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
-                 assets_root, fallback_blocks, presentation, title):
+                 assets_root, fallback_blocks, presentation, title,
+                 occ_padded):
     d, r, u = _fast._camera(view)
     (x0, x1), (y0, y1), (z0, z1) = crop
     ss = SUPERSAMPLE if presentation else 1
@@ -805,7 +993,9 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
         canvas = Image.alpha_composite(
             canvas.convert("RGBA"), shadow).convert("RGB")
 
-    # Collect quads: (depth, x, y, z, seq, pts3d, normal, tex).
+    # Collect quads: (depth, x, y, z, seq, wpts, normal, tex,
+    # _is_fallback, block). The normal rides along for per-vertex AO
+    # sampling (it is not recomputed or altered anywhere downstream).
     quads = []
     seq = 0
     sub = arr[x0:x1, y0:y1, z0:z1]
@@ -830,13 +1020,14 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
                 continue  # back-face culling
             wpts = [(px + x, py + y, pz + z) for px, py, pz in pts]
             depth = sum(p[i] * d[i] for p in wpts for i in range(3)) / 4.0
-            quads.append((depth, x, y, z, seq, wpts, tex, _is_fallback, block))
+            quads.append((depth, x, y, z, seq, wpts, normal, tex,
+                          _is_fallback, block))
             seq += 1
 
     quads.sort(key=lambda t: (-t[0], t[1], t[2], t[3], t[4]))
     # Screen-space centroids of fallback blocks, for debug-mode labels.
     fallback_labels: dict[str, list] = {}
-    for _, _, _, _, _, wpts, tex, is_fb, block in quads:
+    for _, x, y, z, _, wpts, normal, tex, is_fb, block in quads:
         proj_pts = _fast._project(np.array(wpts), r, u)
         tw, th = tex.size
         # UV order [(u0,v0), (u0,v1), (u1,v1), (u1,v0)] ↔ texture
@@ -844,7 +1035,17 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
         pairs = [(px, py, tx, ty) for (px, py), (tx, ty) in zip(
             [to_px(sx, sy) for sx, sy in proj_pts],
             [(0, 0), (0, th), (tw, th), (tw, 0)])]
-        _draw_textured_quad(canvas, pairs, tex)
+        # Smooth lighting: per-vertex AO from the padded occlusion grid.
+        # v_local = vertex minus the cell's array coords (the sampler's
+        # [0, 1] space). All level-3 → fast path (ao=None, pixel-identical
+        # to pre-AO); otherwise multiply _AO_BRIGHTNESS at draw time.
+        v_locals = np.asarray(wpts, dtype=float) - (x, y, z)
+        levels = _quad_ao_levels(v_locals, normal, (x, y, z), occ_padded)
+        if bool((levels == 3).all()):
+            ao = None
+        else:
+            ao = [_AO_BRIGHTNESS[int(lv)] for lv in levels]
+        _draw_textured_quad(canvas, pairs, tex, ao)
         if is_fb and not presentation:
             sx = sum(p[0] for p in pairs) / 4
             sy = sum(p[1] for p in pairs) / 4
@@ -910,6 +1111,21 @@ def render(grid, out_dir, views: list[View], assets_dir,
                 name = _fast._split_blockstate(block)[0]
                 untrusted[name] = untrusted.get(name, 0) + int((arr == idx).sum())
 
+    # Ambient-occlusion opacity grid (smooth lighting): classified once
+    # per render() call per palette entry (reuses tex_cache), then
+    # expanded to a padded cell grid — out-of-bounds reads as air
+    # (non-occluding). One grid for all views.
+    occ_padded = None
+    if crop is not None:
+        occ_idx = np.zeros(len(palette), dtype=bool)
+        for _idx, _block in enumerate(palette):
+            occ_idx[_idx] = _block_occludes_ao(
+                _block, assets_root, tex_cache)
+        occ_padded = np.zeros(
+            tuple(n + 2 for n in arr.shape), dtype=bool)
+        _valid = arr >= 0  # -1 = UNSET → non-occluding
+        occ_padded[1:-1, 1:-1, 1:-1][_valid] = occ_idx[arr[_valid]]
+
     for view in views:
         if crop is None:
             img = Image.new("RGB", (512, 512),
@@ -924,7 +1140,7 @@ def render(grid, out_dir, views: list[View], assets_dir,
         else:
             img = _render_view(arr, palette, crop, view, quad_cache,
                                tex_cache, assets_root, fallback_blocks,
-                               presentation, title)
+                               presentation, title, occ_padded)
         path = out / f"{view.label}.png"
         img.save(path)
         paths.append(path)
