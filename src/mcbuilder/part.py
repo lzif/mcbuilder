@@ -183,9 +183,11 @@ def stairs_run(
       the rise, rise >= 0).
 
     Facing rule (the factory computes this, the agent never hand-guesses):
-    each step's stairs block gets ``facing`` = the OPPOSITE of the ascent
-    direction, and ``half=bottom`` — stairs face the climber (ascending
-    north means facing south), matching the vanilla placement convention.
+    each step's stairs block gets ``facing`` = the ascent direction, and
+    ``half=bottom`` — the tall back sits uphill, so the run is climbable
+    via auto-step. This matches vanilla: stairs ascending northward have
+    ``facing=north`` (a player placing stairs while facing D gets
+    ``facing=D``).
 
     ``width > 1`` widens the run along the horizontal axis perpendicular
     to ``direction``, toward the positive side from the origin; the top
@@ -208,7 +210,7 @@ def stairs_run(
     if isinstance(width, bool) or not isinstance(width, int) or width < 1:
         raise McbuilderError(f"stairs_run: width must be an int >= 1, got {width!r}")
     dx, dz = _DIRECTIONS[dir_key]
-    facing = _OPPOSITE[dir_key]
+    facing = dir_key
     step_block = _merge_props(block, {"facing": facing, "half": "bottom"})
     px, pz = (0, 1) if dx != 0 else (1, 0)
     geo = Geometry()

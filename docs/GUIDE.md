@@ -354,15 +354,16 @@ facing is ever guessed. Only helpers whose geometry implies a
 direction compute one, and each documents its rule:
 
 - `roof_gable(..., ridge="x"|"z")` — `ridge` is required, no default.
-  Each row's `facing` points toward the eave it ascends from
-  (downhill): `ridge="x"` ⇒ north-eave rows face `north`,
-  south-eave rows face `south` (and `west`/`east` for `ridge="z"`).
-  Passing a `facing` property yourself is a `BuildError` — the facing
-  is computed, never merged. `half` defaults to `bottom`.
+  Each row's `facing` points toward the ridge (uphill): `ridge="x"` ⇒
+  north-eave rows face `south`, south-eave rows face `north` (and
+  `east`/`west` for `ridge="z"`). The ridge row of an odd-span roof
+  faces the min-side eave. Passing a `facing` property yourself is a
+  `BuildError` — the facing is computed, never merged. `half` defaults
+  to `bottom`.
 - `stairs_run` — step `i` at `(i·dx, i, i·dz)`, ascending *towards*
-  `direction`. Each step gets `facing` = the **opposite** of the ascent
-  direction and `half=bottom` — stairs face the climber (ascending
-  north ⇒ facing south), matching vanilla placement. `width > 1`
+  `direction`. Each step gets `facing` = the ascent direction and
+  `half=bottom` — the tall back sits uphill so the run is climbable,
+  matching vanilla (ascending north ⇒ facing north). `width > 1`
   widens toward the positive perpendicular side.
 - `railing(start, end, block)` — straight axis-aligned run (x or z
   constant, same y); anything else is a `BuildError`. Fence/wall
@@ -573,16 +574,15 @@ string through untouched.
 
 **Stair rows show "gaps" / floating strips in the preview (faithful *and* trusted tiers).**
 This is real Minecraft geometry, not a renderer bug. A stair block is
-two boxes: a full-height half and a half-height half. When `roof_gable`
-(or `stairs_run`) stacks rows 1 block up and 1 block over with the tall
-half facing *away* from the next row, a 0.5-block see-through notch is
-left between rows — vanilla Minecraft has the exact same notch, and
-from a high isometric angle you can see through it to whatever is
-below (background if the roof is floating). Both the trusted and
-faithful tiers render it identically. If the gaps bother you: put
-something under the roof (walls, a ceiling), or view from a lower
-elevation where the rows overlap. Do **not** "fix" it by editing the
-preview — the voxels are correct.
+two boxes: a full-height half and a half-height half. Rows from
+`roof_gable` / `stairs_run` interlock with no gap — each row's tall
+back faces uphill toward the next row up, the same closed geometry as
+a hand-built vanilla roof. If you *do* see 0.5-block see-through
+notches between rows, the facings point downhill (tall backs away
+from the next row up): check any hand-placed `facing` values against
+the direction conventions above. Both the trusted and faithful tiers
+render the voxels identically — do **not** "fix" it by editing the
+preview.
 
 **`mcbuild: error: placements must be inside 'with BUILD:'`**
 Every placement call (`set`, `box`, `place`, parts, …) must run inside

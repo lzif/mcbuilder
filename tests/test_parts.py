@@ -30,10 +30,11 @@ class FakeBuild:
 STAIR = "minecraft:oak_stairs"
 
 EXPECTED_FACING = {
-    "north": "south",  # ascending north => facing south (faces the climber)
-    "south": "north",
-    "east": "west",
-    "west": "east",
+    # facing = ascent direction (tall back uphill, climbable) — vanilla
+    "north": "north",  # ascending north => facing north
+    "south": "south",
+    "east": "east",
+    "west": "west",
 }
 
 
@@ -65,10 +66,10 @@ def test_stairs_run_extra_props_preserved_and_facing_overridden():
         b, (0, 0, 0), "north", 2, "minecraft:oak_stairs[waterlogged=true,facing=east]"
     )
     assert b.placements[(0, 0, 0)] == (
-        "minecraft:oak_stairs[facing=south,half=bottom,waterlogged=true]"
+        "minecraft:oak_stairs[facing=north,half=bottom,waterlogged=true]"
     )
     assert b.placements[(0, 1, -1)] == (
-        "minecraft:oak_stairs[facing=south,half=bottom,waterlogged=true]"
+        "minecraft:oak_stairs[facing=north,half=bottom,waterlogged=true]"
     )
 
 
@@ -77,7 +78,7 @@ def test_stairs_run_nbt_passthrough():
     b = FakeBuild()
     parts.stairs_run(b, (0, 0, 0), "east", 1, 'minecraft:chest{CustomName:"x"}')
     assert b.placements[(0, 0, 0)] == (
-        'minecraft:chest[facing=west,half=bottom]{CustomName:"x"}'
+        'minecraft:chest[facing=east,half=bottom]{CustomName:"x"}'
     )
 
 
@@ -118,7 +119,7 @@ def test_stairs_run_target_places_top_step_exactly():
     parts.stairs_run(b, (10, 20, 30), "north", block=STAIR, target=(10, 24, 26))
     # 5 steps ascending north: top step is start + 4 toward north = (10, 24, 26)
     assert len(b.placements) == 5
-    expected = "minecraft:oak_stairs[facing=south,half=bottom]"
+    expected = "minecraft:oak_stairs[facing=north,half=bottom]"
     assert b.placements[(10, 24, 26)] == expected
     for i in range(5):
         assert b.placements[(10, 20 + i, 30 - i)] == expected
@@ -148,7 +149,7 @@ def test_stairs_run_target_same_cell_is_one_step():
     b = FakeBuild()
     parts.stairs_run(b, (5, 5, 5), "east", block=STAIR, target=(5, 5, 5))
     assert b.placements == {
-        (5, 5, 5): "minecraft:oak_stairs[facing=west,half=bottom]"
+        (5, 5, 5): "minecraft:oak_stairs[facing=east,half=bottom]"
     }
 
 
@@ -256,8 +257,8 @@ def test_composition_hut_corner():
     for i in range(4):
         assert b.placements[(0, i, 0)] == "minecraft:oak_log[axis=y]"
 
-    # stairs: 3 steps x 2 wide, ascending north (-Z), facing south
-    stair = "minecraft:stone_brick_stairs[facing=south,half=bottom]"
+    # stairs: 3 steps x 2 wide, ascending north (-Z), facing north
+    stair = "minecraft:stone_brick_stairs[facing=north,half=bottom]"
     for i in range(3):
         for w in range(2):
             assert b.placements[(w, i, 5 - i)] == stair

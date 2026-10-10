@@ -89,16 +89,16 @@ def test_part_box_relative_corners_any_order():
 def test_part_stairs_run_relative_facing():
     g = part.stairs_run(direction="north", length=2, block="minecraft:oak_stairs")
     assert g.cells() == [
-        (0, 0, 0, "minecraft:oak_stairs[facing=south,half=bottom]"),
-        (0, 1, -1, "minecraft:oak_stairs[facing=south,half=bottom]"),
+        (0, 0, 0, "minecraft:oak_stairs[facing=north,half=bottom]"),
+        (0, 1, -1, "minecraft:oak_stairs[facing=north,half=bottom]"),
     ]
 
 
 def test_part_stairs_run_width():
     g = part.stairs_run(direction="east", length=1, block="minecraft:oak_stairs", width=2)
     assert g.cells() == [
-        (0, 0, 0, "minecraft:oak_stairs[facing=west,half=bottom]"),
-        (0, 0, 1, "minecraft:oak_stairs[facing=west,half=bottom]"),
+        (0, 0, 0, "minecraft:oak_stairs[facing=east,half=bottom]"),
+        (0, 0, 1, "minecraft:oak_stairs[facing=east,half=bottom]"),
     ]
 
 

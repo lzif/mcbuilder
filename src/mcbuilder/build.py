@@ -276,24 +276,26 @@ class Build:
         row.
 
         Facing rule (computed from geometry, documented here): each row's
-        ``facing`` points toward the eave it ascends from, i.e. downhill.
-        For ``ridge="x"`` the eaves are at the Z extremes: north-eave rows
-        face ``north``, south-eave rows face ``south``. For ``ridge="z"``:
-        west-eave rows face ``west``, east-eave rows face ``east``. The
-        ridge row of an odd-span roof faces the min-side eave.
+        ``facing`` points toward the ridge, i.e. uphill — the tall back
+        sits on the high side so every slope reads as a staircase
+        climbing to the ridge, matching vanilla. For ``ridge="x"`` the
+        eaves are at the Z extremes: north-eave rows (ascending
+        southward) face ``south``, south-eave rows face ``north``. For
+        ``ridge="z"``: west-eave rows face ``east``, east-eave rows face
+        ``west``. The ridge row of an odd-span roof keeps facing the
+        min-side eave, so it reads as the top step of the max-side slope.
 
         ``block`` should be a stair block *without* a ``facing`` property
         (passing one is a :class:`BuildError` — the facing is computed,
         never merged). ``half`` defaults to ``bottom`` when absent; all
         other properties and NBT pass through verbatim.
 
-        Note on preview appearance: each row's tall half faces *away*
-        from the next row up, so a 0.5-block see-through notch sits
-        between rows (same as vanilla Minecraft). From a high isometric
-        angle the preview shows through these notches to whatever is
-        below the roof — background if the roof floats. This is faithful
-        geometry, not a rendering bug; see the Troubleshooting section
-        of the guide.
+        Note on preview appearance: each row's tall back faces uphill
+        toward the next row up, so consecutive rows interlock with no
+        see-through gap — the same closed geometry as a hand-built
+        vanilla roof. (An earlier version of this helper faced rows
+        downhill, which left real 0.5-block notches; that was a bug,
+        fixed in #4.)
 
         Returns the placed :class:`Geometry` (absolute coordinates), so
         ``geo.bounds()`` reports the exact roof footprint and peak —
@@ -331,8 +333,8 @@ class Build:
         geo = Geometry()
         for k in range(pairs):
             y = eave + k
-            lo = _emit(name, {**base_props, "facing": eave_lo}, nbt)
-            hi = _emit(name, {**base_props, "facing": eave_hi}, nbt)
+            lo = _emit(name, {**base_props, "facing": eave_hi}, nbt)
+            hi = _emit(name, {**base_props, "facing": eave_lo}, nbt)
             for r in range(run_lo, run_hi + 1):
                 if ridge == "x":
                     geo.set(r, y, span_lo + k, lo)

@@ -146,12 +146,12 @@ def test_parts_methods_place_expected_cells_with_provenance():
         b.pillar((5, 0, 5), 3, "minecraft:oak_log[axis=y]")
         b.railing((0, 4, 0), (2, 4, 0), "minecraft:oak_fence")
     grid = b.grid
-    # stairs ascend north (-z), facing south (towards the climber)
+    # stairs ascend north (-z), tall backs uphill (facing north)
     arr, palette, provenance = grid.to_dense()
     stair_idx = next(
         i for i, s in enumerate(palette) if s.startswith("minecraft:stone_brick_stairs")
     )
-    assert "facing=south" in palette[stair_idx]
+    assert "facing=north" in palette[stair_idx]
     assert "half=bottom" in palette[stair_idx]
     # 3 steps + 3 pillar + 3 railing = 9 non-air cells
     assert grid.count_non_air() == 9
@@ -231,7 +231,7 @@ def test_cli_run_end_to_end(tmp_path, monkeypatch):
     assert all(v["file"].startswith("previews_faithful/") for v in faithful)
     # block_counts is the survival shopping list: post-crop, air excluded
     assert report["block_counts"]["minecraft:oak_planks"] == 5 * 3 * 5
-    assert report["block_counts"]["minecraft:stone_brick_stairs[facing=west,half=bottom]"] == 3
+    assert report["block_counts"]["minecraft:stone_brick_stairs[facing=east,half=bottom]"] == 3
     assert "minecraft:air" not in report["block_counts"]
     previews = sorted((run_dir / "previews").glob("*.png"))
     assert len(previews) == 9

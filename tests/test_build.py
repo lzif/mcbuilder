@@ -154,12 +154,13 @@ def test_roof_gable_ridge_x():
     assert b.grid.bounds() == ((0, 0, 0), (4, 2, 4))
     arr, palette, _ = b.grid.to_dense()
     at = lambda x, y, z: palette[arr[x, y, z]]
-    # north eave (z=0) ascends toward +z: low side faces north
-    assert _facing(at(2, 0, 0)) == "north"
-    assert _facing(at(2, 0, 4)) == "south"
-    assert _facing(at(2, 1, 1)) == "north"
-    assert _facing(at(2, 1, 3)) == "south"
-    # ridge row (odd span) faces the min-side eave
+    # north eave (z=0) ascends toward +z: tall backs face uphill (south)
+    assert _facing(at(2, 0, 0)) == "south"
+    assert _facing(at(2, 0, 4)) == "north"
+    assert _facing(at(2, 1, 1)) == "south"
+    assert _facing(at(2, 1, 3)) == "north"
+    # ridge row (odd span) faces the min-side eave, continuing the
+    # max-side (south) slope
     assert _facing(at(2, 2, 2)) == "north"
     # gap above the ridge-side slope is empty
     assert arr[2, 1, 2] == -1
@@ -173,8 +174,8 @@ def test_roof_gable_ridge_z():
         b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "z")
     arr, palette, _ = b.grid.to_dense()
     at = lambda x, y, z: palette[arr[x, y, z]]
-    assert _facing(at(0, 0, 2)) == "west"
-    assert _facing(at(4, 0, 2)) == "east"
+    assert _facing(at(0, 0, 2)) == "east"  # west eave ascends eastward
+    assert _facing(at(4, 0, 2)) == "west"  # east eave ascends westward
     assert _facing(at(2, 2, 2)) == "west"  # ridge faces min-side eave
 
 

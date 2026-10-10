@@ -62,12 +62,11 @@ textures resolved once); per-texture PIL image cache (no atlas — the
 unique-texture count is small); painter's algorithm like the other
 tiers. Fast enough for 7×7×7 waystones now and windmill-scale next.
 
-Known quirk (documented, not a bug): stair rows (e.g. from
-``roof_gable``/``stairs_run``) leave real 0.5-block see-through notches
-between rows — vanilla Minecraft geometry, verified against the model
-JSONs. From a high isometric angle the renderer shows through these
-notches to whatever is below (background if floating). The trusted
-tier renders the identical notches; the voxels are correct.
+Stair rows (e.g. from ``roof_gable``/``stairs_run``) interlock with no
+see-through gap between rows — each row's tall back faces uphill toward
+the next row up, the same closed geometry as a hand-built vanilla roof.
+(Before the #4 facing fix the rows faced downhill and left real
+0.5-block notches; that geometry was a bug, not a quirk.)
 """
 
 from __future__ import annotations
