@@ -159,6 +159,25 @@ def _split_blockstate(canonical: str) -> tuple[str, dict[str, str]]:
     return name, prop_dict
 
 
+# Default props for variant matching when the canonical blockstate omits
+# them. Shared with the faithful tier: a missing prop means the vanilla
+# default blockstate, which is also what the validator accepts and what
+# structure-loading fills in. Without these, bare names like
+# ``minecraft:oak_log`` (no ``axis``) match no variant in real vanilla
+# blockstates (which, unlike some test fixtures, ship no empty-key
+# default) and degrade to the flat fallback color.
+_DEFAULT_PROPS = {
+    "facing": "north",
+    "half": "bottom",
+    "shape": "straight",
+    "type": "bottom",  # slabs
+    "axis": "y",
+    "hanging": "false",  # lanterns
+    "waterlogged": "false",
+    "open": "false",
+}
+
+
 def _match_variant(variants: dict, props: dict[str, str]):
     """Pick the most specific variant whose key pairs are all satisfied."""
     best, best_n = None, -1
@@ -203,7 +222,12 @@ def _do_resolve(block_name: str, props: dict, root: Path):
     model_ref = None
     variants = bs.get("variants")
     if variants:
-        var = _match_variant(variants, props)
+        # Fill missing props from vanilla defaults so partial canonical
+        # blockstates (e.g. stairs without ``shape``, logs without ``axis``)
+        # still match a variant — same convention as the faithful tier.
+        full_props = dict(_DEFAULT_PROPS)
+        full_props.update(props)
+        var = _match_variant(variants, full_props)
         if var:
             model_ref = var.get("model")
     elif bs.get("multipart"):
@@ -295,10 +319,13 @@ def _face_tex_vars(images: dict, parent_leaf: str | None) -> dict[str, str | Non
     def pick(*cands: str) -> str | None:
         return next((c for c in cands if c in keys), None)
 
-    side = pick("side", "front", "all")
+    # Last resort for non-cube models (fences, torches, ...): any usable
+    # texture var beats a flat fallback color in this tier.
+    any_tex = next((k for k in keys if k != "particle"), None)
+    side = pick("side", "front", "all", "texture") or any_tex
     return {
-        "up": pick("top", "up", "end", "all"),
-        "down": pick("bottom", "down", "end", "all"),
+        "up": pick("top", "up", "end", "all", "texture") or side,
+        "down": pick("bottom", "down", "end", "all", "texture") or side,
         "north": side, "south": side, "east": side, "west": side,
     }
 

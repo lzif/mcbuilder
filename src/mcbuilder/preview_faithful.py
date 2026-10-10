@@ -310,22 +310,14 @@ def _when_matches(when, props: dict[str, str]) -> bool:
     return True
 
 
-# Default props for variant matching when the canonical blockstate omits
-# them. Mirrors the trusted tier's convention (``props.get("facing",
-# "north")`` etc.): a missing prop means the vanilla default blockstate,
-# which is also what the validator accepts and what structure-loading
-# fills in. Without these, bare names like ``minecraft:lantern`` match no
-# variant and degrade to the fallback cube.
-_DEFAULT_PROPS = {
-    "facing": "north",
-    "half": "bottom",
-    "shape": "straight",
-    "type": "bottom",  # slabs
-    "axis": "y",
-    "hanging": "false",  # lanterns
-    "waterlogged": "false",
-    "open": "false",
-}
+# Shared with the fast tier (preview._DEFAULT_PROPS): default props for
+# variant matching when the canonical blockstate omits them. Mirrors the
+# trusted tier's convention (``props.get("facing", "north")`` etc.): a
+# missing prop means the vanilla default blockstate, which is also what
+# the validator accepts and what structure-loading fills in. Without
+# these, bare names like ``minecraft:lantern`` match no variant and
+# degrade to the fallback cube.
+_DEFAULT_PROPS = _fast._DEFAULT_PROPS
 
 
 def _model_applications(block_name: str, props: dict, root: Path):
