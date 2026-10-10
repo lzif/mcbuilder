@@ -404,6 +404,15 @@ def test_export_artifact_writes_nbt(tmp_path):
 # assets
 # ---------------------------------------------------------------------------
 
+def test_assets_fetch_help_says_textures_are_included(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["assets", "fetch", "--help"])
+    assert exc.value.code == 0
+    out, _ = capsys.readouterr()
+    assert "textures" in out
+    assert "no separate textures step" in out
+
+
 def test_assets_fetch(tmp_path, capsys):
     cache = tmp_path / "cache"
     assert main(["assets", "fetch", "--version", "1.21.4", "--cache-dir", str(cache)]) == 0

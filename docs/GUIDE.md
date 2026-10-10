@@ -23,7 +23,9 @@ uv pip install mcbuilder
 
 Then fetch the block registry and vanilla client assets **once** for
 your server's Minecraft version (Mojang assets are never bundled —
-they are downloaded at user time into `~/.cache/mcbuilder/`):
+they are downloaded at user time into `~/.cache/mcbuilder/`).
+Textures are part of the fetch by default — there is no separate
+textures step:
 
 ```bash
 mcbuild assets fetch --version 26.2
@@ -166,7 +168,7 @@ BUILD.box((3, peak - 1, 2), (3, peak + 2, 2), "minecraft:cobblestone")  # chimne
 
 | Part | Factory signature | One-shot |
 |---|---|---|
-| `stairs_run` | `mb.part.stairs_run(*, direction, length, block, width=1)` | `mb.parts.stairs_run(BUILD, start, direction, length, block, width=1)` / `BUILD.stairs_run(start, direction, length, block, width=1)` |
+| `stairs_run` | `mb.part.stairs_run(*, direction, length=None, block, width=1, target=None)` | `mb.parts.stairs_run(BUILD, start, direction, length=None, block, width=1, *, target=None)` / `BUILD.stairs_run(start, direction, length=None, block, width=1, *, target=None)` |
 | `pillar` | `mb.part.pillar(*, height, block)` | `BUILD.pillar(base, height, block)` |
 | `railing` | `mb.part.railing(*, start, end, block)` | `BUILD.railing(start, end, block)` |
 | `box` | `mb.part.box(*, c1, c2, block)` | `BUILD.box(c1, c2, block)` |
@@ -182,12 +184,57 @@ same numbers at runtime.
 | `BUILD.box(c1, c2, block)` | XZ rectangle of the corners | `\|dx\|+1` × `\|dy\|+1` × `\|dz\|+1` cells, corners inclusive |
 | `BUILD.walls(c1, c2, block)` | same XZ as `box` | four vertical walls over the full Y range; **no** floor, **no** ceiling |
 | `BUILD.floor(c1, c2, block)` | XZ rectangle of the corners | 1 thick, at `min(c1.y, c2.y)` |
-| `BUILD.roof_gable(c1, c2, block, ridge)` | XZ rectangle of the corners | rises `ceil(span/2)` above the eave height (`min(c1.y, c2.y)`), where `span` is the footprint extent **perpendicular** to the ridge (Z extent for `ridge="x"`, X extent for `ridge="z"`). 5-deep ⇒ 3 tall; 6-deep ⇒ 3 tall, no ridge row |
+| `BUILD.roof_gable(c1, c2, block, ridge, eave_height=None)` | XZ rectangle of the corners | rises `ceil(span/2)` above the eave height (`min(c1.y, c2.y)` when `eave_height` is omitted — the corners' Y only sets the eaves), where `span` is the footprint extent **perpendicular** to the ridge (Z extent for `ridge="x"`, X extent for `ridge="z"`). 5-deep ⇒ 3 tall; 6-deep ⇒ 3 tall, no ridge row |
 | `BUILD.stairs_run(start, direction, length, block, width=1)` | `length` steps toward `direction` × `width` wide (perpendicular, positive side) | step `i` at `start_y + i`: total rise = `length` |
+| `BUILD.stairs_run(start, direction, block, target=(x,y,z))` | same, but the TOP step lands exactly at `target` — no landing math | length derived as `target_y - start_y + 1`; `ValueError` if `target` isn't reachable (must be on the 1:1 diagonal from `start` toward `direction`: zero perpendicular offset, horizontal travel == rise, rise ≥ 0). `length` and `target` are mutually exclusive |
 | `BUILD.pillar(base, height, block)` | 1 × 1 at `base` | `height` blocks up from `base.y` |
 | `BUILD.railing(start, end, block)` | straight run `start` → `end`, inclusive, axis-aligned | 1 thick |
 | `BUILD.place(geo, at=(x,y,z))` | `geo`'s cells shifted by `at` | — |
 | `BUILD.set(x, y, z, block)` | one block | — (returns `None`; the primitive, not a helper) |
+| `BUILD.carve(c1, c2)` | XZ rectangle of the corners | removes `\|dx\|+1` × `\|dy\|+1` × `\|dz\|+1` cells, corners inclusive, any order — the exact complement of `box` |
+
+### Introspection — reading the build back
+
+Scripts can read their own grid without dropping to numpy. All three
+are read-only (no `with BUILD:` needed):
+
+- `BUILD.get(x, y, z)` → the canonical block string at that cell, e.g.
+  `"minecraft:oak_stairs[facing=north]"`, or `None` when the cell is
+  empty or carved air.
+- `BUILD.count(block)` → how many cells hold `block` (exact match on
+  the canonical blockstate — the input is canonicalized first, so
+  property order never matters, but the property set must match
+  verbatim).
+- `BUILD.find(block)` → sorted list of `(x, y, z)` tuples holding
+  `block`; `[]` when nothing matches.
+
+```python
+with BUILD:
+    BUILD.box((0, 0, 0), (9, 0, 9), "minecraft:stone")
+
+BUILD.get(0, 0, 0)                    # "minecraft:stone"
+BUILD.get(5, 5, 5)                    # None — never placed
+BUILD.count("minecraft:stone")        # 100
+BUILD.find("minecraft:dirt")          # []
+```
+
+**`to_dense()` axis convention** — the trap to avoid. `BUILD.grid.to_dense()`
+returns `(array, palette, provenance)` where `array` has shape
+`(sx, sy, sz)` and `array[i, j, k]` is the cell at `(minx+i, miny+j, minz+k)`:
+**axis 0 is X, axis 1 is Y, axis 2 is Z — the mapping is direct, not
+transposed.** Never index `array[z, y, x]`; never assume the first axis is
+height. Never-placed cells inside the bbox read as `-1` (`UNSET`);
+explicitly carved `"minecraft:air"` cells read as air's palette index
+(carved air is distinguishable from untouched cells — that's what the
+exporter's `include_air` flag needs).
+
+Subtractive primitive: `BUILD.carve(c1, c2)` removes every cell in the
+inclusive box between the two corners (any order — same corner
+semantics as `box`). Removed cells read as unset (`UNSET` in
+`to_dense`, `None` from `get`), unlike `set(x, y, z, "minecraft:air")`
+which leaves a carved air cell the exporter can include. Carving a
+region with no placed cells is a no-op. `carve` is a mutation, so it
+requires `with BUILD:`.
 
 ### Layering law
 
@@ -199,6 +246,24 @@ Build.place              stamp a Geometry into the grid        (op layer)
 mb.parts.*               one-shot sugar over place()           (op layer)
 your script              the modifier stack (re-run = re-evaluate)
 ```
+
+### Stairs by target, not landing math
+
+`stairs_run` accepts `target=` — the exact cell the TOP step must
+occupy — instead of a hand-computed `length`:
+
+```python
+with BUILD:
+    # top step lands exactly at (4, 3, 0): 4 steps, no math
+    BUILD.stairs_run((0, 0, 0), "east", block="minecraft:oak_stairs",
+                     target=(4, 3, 0))
+```
+
+The length is derived as `target_y - start_y + 1`, and `target` must
+sit on the run's 1:1 diagonal from `start` toward `direction` (zero
+perpendicular offset, horizontal travel equal to the rise, rise ≥ 0)
+— otherwise `ValueError`. `length` and `target` are mutually
+exclusive: give exactly one.
 
 ## 4. Authoring walkthrough
 
@@ -336,6 +401,10 @@ N-view orbit at el25. Hard cap: **36 views** per render set.
 mcbuild run hut.py --preview --views "iso;az000_el025;az180_el025;top"
 ```
 
+See [docs/VIEWS.md](VIEWS.md) — the six standard views
+(`az000/az090/az180/az270` at 25° elevation, `top`, `iso`) rendered
+from a sample hut, with one-line descriptions.
+
 ## 7. The three preview tiers
 
 `mcbuild run --preview` renders every resolved view in **three** tiers
@@ -386,8 +455,53 @@ mcbuild run <script> [--out dist/] [--preview] [--views SPEC]
 # --include-air writes air cells into the .nbt (default: air excluded).
 
 mcbuild assets fetch --version <x.y.z> [--cache-dir DIR]
-# one-time per version: registry + vanilla client assets.
+# one-time per version: registry + vanilla client assets (textures,
+# block models, blockstates). Textures are always included — there is
+# no separate textures step.
+
+mcbuild diff run-001 run-002 [--out dist/] [--max 30]
+# compare two runs' voxel data (read from each run's .nbt artifact).
+# Prints added/removed/replaced cells, capped at --max entries.
+# Exit 0 when identical, 1 when differences found. Writes a side-by-side
+# preview comparison PNG (dist/diff-run-001-run-002.png) when both runs
+# share a preview view.
 ```
+
+### Iterating: tweak → run → diff
+
+The intended loop: tweak the script, `mcbuild run`, then
+`mcbuild diff <old> <new>` to see exactly what changed before trusting
+the preview:
+
+```bash
+mcbuild run house.py --out dist/ --preview   # -> dist/run-004
+mcbuild diff run-003 run-004
+# diff run-003 -> run-004
+#   12 changed cells: 9 added, 1 removed, 2 replaced (97 -> 105 cells)
+#   + (3, 2, 1) minecraft:oak_planks
+#   - (1, 0, 0) minecraft:stone
+#   ~ (2, 1, 1) minecraft:oak_stairs[facing=north,half=bottom] -> minecraft:oak_stairs[facing=south,half=bottom]
+#   ...
+#   comparison: dist/diff-run-003-run-004.png
+```
+
+Run ids accept the bare number too (`mcbuild diff 3 4`). Both runs must
+be clean — a run that failed validation exports no `.nbt`, and diff
+says so instead of guessing.
+
+Two things to know about what the diff compares:
+
+- **Positions are bbox-relative.** The `.nbt` stores cell positions as
+  offsets from each run's own bbox minimum, so the diff is anchored at
+  each run's bbox origin — a build that moved wholesale reports as
+  identical. If you added cells on the negative side and the origin
+  shifted, treat the diff as "changed against the new origin".
+- **The comparison image is a side-by-side, not a heatmap.** The PNG
+  pairs the first preview view both runs share (each panel captioned
+  with its run id, change counts in the title band). Changed cells
+  aren't tinted on the renders — the exact cell list above is the
+  source of truth; use the image to eyeball whether the change looks
+  right in context.
 
 ### `report.json`
 
@@ -449,6 +563,19 @@ string through untouched.
 
 ## 10. Troubleshooting
 
+**Stair rows show "gaps" / floating strips in the preview (faithful *and* trusted tiers).**
+This is real Minecraft geometry, not a renderer bug. A stair block is
+two boxes: a full-height half and a half-height half. When `roof_gable`
+(or `stairs_run`) stacks rows 1 block up and 1 block over with the tall
+half facing *away* from the next row, a 0.5-block see-through notch is
+left between rows — vanilla Minecraft has the exact same notch, and
+from a high isometric angle you can see through it to whatever is
+below (background if the roof is floating). Both the trusted and
+faithful tiers render it identically. If the gaps bother you: put
+something under the roof (walls, a ceiling), or view from a lower
+elevation where the rows overlap. Do **not** "fix" it by editing the
+preview — the voxels are correct.
+
 **`mcbuild: error: placements must be inside 'with BUILD:'`**
 Every placement call (`set`, `box`, `place`, parts, …) must run inside
 the `with BUILD:` block. Module-level code outside it can't place.
@@ -501,8 +628,11 @@ Use the seeded `BUILD.rng()`.
 ## 11. FAQ
 
 **Do I need the Minecraft client / a server to use this?**
-No. `mcbuild assets fetch` downloads everything (registry + vanilla
-assets). The `.nbt` only touches a server when LostQoL pastes it.
+No. `mcbuild assets fetch` downloads everything in one step: the block
+registry plus the vanilla client assets — textures, block models, and
+blockstates. Textures are fetched by default; there is no textures-only
+mode and no separate textures step. The `.nbt` only touches a server
+when LostQoL pastes it.
 
 **Which Minecraft version?**
 Whatever your server runs — pin it in `mcbuild.toml` (`mc_version`).

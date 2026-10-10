@@ -31,7 +31,7 @@ import sys
 from mcbuilder.blocks import canonicalize, parse
 from mcbuilder.errors import McbuilderError
 from mcbuilder.geometry import Geometry
-from mcbuilder.voxels import VoxelGrid
+from mcbuilder.voxels import AIR, VoxelGrid
 
 
 class BuildError(McbuilderError):
@@ -220,6 +220,30 @@ class Build:
         (x1, y1, z1), (x2, _y2, z2) = _corners(c1, c2)
         return self.box((x1, y1, z1), (x2, y1, z2), block)
 
+    def carve(self, c1: tuple[int, int, int], c2: tuple[int, int, int]) -> None:
+        """Remove every cell in the box between corners ``c1`` and ``c2``.
+
+        The exact complement of :meth:`box`: corners are inclusive and
+        may be given in any order (same ``_corners`` semantics —
+        ``(|dx| + 1) × (|dy| + 1) × (|dz| + 1)`` cells removed).
+
+        Removed cells read as *unset* — ``UNSET`` in
+        :meth:`mcbuilder.voxels.VoxelGrid.to_dense`, ``None`` from
+        :meth:`get`. That differs from carving with :meth:`set` and
+        ``"minecraft:air"``, which leaves a carved *air cell* that the
+        exporter can include via ``include_air``.
+
+        Carving a region with no placed cells is a no-op. Must be called
+        inside ``with BUILD:``.
+        """
+        (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
+        self._require_batch()
+        cells = self._grid._cells
+        for x in range(x1, x2 + 1):
+            for y in range(y1, y2 + 1):
+                for z in range(z1, z2 + 1):
+                    cells.pop((x, y, z), None)
+
     # -- direction-computing helper --------------------------------------
 
     def roof_gable(
@@ -228,13 +252,21 @@ class Build:
         c2: tuple[int, int, int],
         block: str,
         ridge: str,
+        eave_height: int | None = None,
     ) -> Geometry:
         """Gable roof of stairs ascending from both eaves to a ridge line.
 
         ``ridge`` is required (``"x"`` or ``"z"``, no default): the axis
         the ridge line runs along. The roof footprint is the XZ rectangle
-        of the corners; it rises from ``min(c1.y, c2.y)`` (the eave
-        height — the corners' Y only sets where the eaves sit).
+        of the corners.
+
+        ``eave_height`` is the Y of the eave row (the lowest stair row).
+        When omitted (the default ``None``) it is inferred as
+        ``min(c1.y, c2.y)`` — the corners' Y only sets where the eaves
+        sit, exactly as before, so omitting it is fully backward
+        compatible. Pass it explicitly to decouple the roof's eave height
+        from the corners' Y (e.g. when the corners mark a footprint at
+        some other Y).
 
         Output bounds: the XZ footprint of the corners, rising
         ``ceil(span / 2)`` blocks above the eave height, where ``span``
@@ -255,6 +287,14 @@ class Build:
         never merged). ``half`` defaults to ``bottom`` when absent; all
         other properties and NBT pass through verbatim.
 
+        Note on preview appearance: each row's tall half faces *away*
+        from the next row up, so a 0.5-block see-through notch sits
+        between rows (same as vanilla Minecraft). From a high isometric
+        angle the preview shows through these notches to whatever is
+        below the roof — background if the roof floats. This is faithful
+        geometry, not a rendering bug; see the Troubleshooting section
+        of the guide.
+
         Returns the placed :class:`Geometry` (absolute coordinates), so
         ``geo.bounds()`` reports the exact roof footprint and peak —
         size a chimney (or anything else) around it.
@@ -270,6 +310,14 @@ class Build:
         base_props = dict(props)
         base_props.setdefault("half", "bottom")
         (x1, y1, z1), (x2, _y2, z2) = _corners(c1, c2)
+        if eave_height is None:
+            eave = y1
+        elif isinstance(eave_height, bool) or not isinstance(eave_height, int):
+            raise BuildError(
+                f"roof_gable: eave_height must be an int, got {eave_height!r}"
+            )
+        else:
+            eave = eave_height
         if ridge == "x":
             span_lo, span_hi = z1, z2
             run_lo, run_hi = x1, x2
@@ -282,7 +330,7 @@ class Build:
         pairs = span // 2
         geo = Geometry()
         for k in range(pairs):
-            y = y1 + k
+            y = eave + k
             lo = _emit(name, {**base_props, "facing": eave_lo}, nbt)
             hi = _emit(name, {**base_props, "facing": eave_hi}, nbt)
             for r in range(run_lo, run_hi + 1):
@@ -293,7 +341,7 @@ class Build:
                     geo.set(span_lo + k, y, r, lo)
                     geo.set(span_hi - k, y, r, hi)
         if span % 2 == 1:
-            y = y1 + pairs
+            y = eave + pairs
             c = span_lo + pairs
             ridge_block = _emit(name, {**base_props, "facing": eave_lo}, nbt)
             for r in range(run_lo, run_hi + 1):
@@ -345,11 +393,20 @@ class Build:
 
     # -- parts catalog (PLAN section 4, v0.1) ----------------------------------
 
-    def stairs_run(self, start, direction, length, block, width=1) -> Geometry:
+    def stairs_run(
+        self, start, direction, length=None, block=None, width=1, *, target=None
+    ) -> Geometry:
         """Straight staircase ascending towards ``direction``.
 
-        Thin delegate to :func:`mcbuilder.parts.stairs_run` (see it for the
-        facing rule). Must be called inside ``with BUILD:``.
+        Thin delegate to :func:`mcbuilder.parts.stairs_run` (see it for
+        the facing rule and the landing contract). Must be called inside
+        ``with BUILD:``.
+
+        Give exactly one of ``length`` / ``target`` (``ValueError`` if
+        both or neither). ``target`` is the absolute (x, y, z) the TOP
+        step must occupy; the length is derived as
+        ``target_y - start_y + 1``. ``ValueError`` if the target isn't
+        reachable along ``direction`` from ``start``.
 
         Output bounds: step ``i`` sits at ``start`` + ``i`` toward
         ``direction`` and ``start_y + i`` up (``i`` in ``0..length-1``);
@@ -359,7 +416,9 @@ class Build:
         """
         from mcbuilder import parts
 
-        return parts.stairs_run(self, start, direction, length, block, width=width)
+        return parts.stairs_run(
+            self, start, direction, length, block, width=width, target=target
+        )
 
     def pillar(self, base, height, block) -> Geometry:
         """Vertical column of ``height`` blocks. Delegate to
@@ -434,6 +493,56 @@ class Build:
     @property
     def views_config(self):
         return self._views_config
+
+    def get(self, x: int, y: int, z: int) -> str | None:
+        """The canonical block string at ``(x, y, z)``, or ``None``.
+
+        Returns the block string exactly as stored in the palette
+        (e.g. ``"minecraft:oak_stairs[facing=north]"`` — canonical form,
+        properties sorted). Returns ``None`` both when the cell was
+        never placed *and* when it holds carved ``"minecraft:air"`` —
+        there is no observable "empty" block to report.
+
+        Read-only: works outside ``with BUILD:``.
+        """
+        idx = self._grid._cells.get((x, y, z))
+        if idx is None:
+            return None
+        block = self._grid._palette[idx]
+        return None if block == AIR else block
+
+    def count(self, block: str) -> int:
+        """Number of cells whose block string equals ``block``.
+
+        ``block`` is canonicalized first (``ValueError`` on malformed
+        input), then matched exactly against stored palette entries —
+        property order never matters, but the property *set* must match
+        verbatim: ``"minecraft:oak_stairs[facing=north]"`` does not
+        match a cell holding ``"...[facing=north,half=top]"``.
+
+        Read-only: works outside ``with BUILD:``.
+        """
+        canonical = canonicalize(block)
+        palette = self._grid._palette
+        return sum(1 for idx in self._grid._cells.values() if palette[idx] == canonical)
+
+    def find(self, block: str) -> list[tuple[int, int, int]]:
+        """Coordinates of every cell holding ``block``, sorted.
+
+        Same matching rule as :meth:`count`: ``block`` is canonicalized,
+        then matched exactly. Returns a list of ``(x, y, z)`` tuples in
+        ascending ``(x, y, z)`` order (deterministic), or ``[]`` when no
+        cell matches.
+
+        Read-only: works outside ``with BUILD:``.
+        """
+        canonical = canonicalize(block)
+        palette = self._grid._palette
+        return sorted(
+            (x, y, z)
+            for (x, y, z), idx in self._grid._cells.items()
+            if palette[idx] == canonical
+        )
 
     def validate(self, registry, allowlist=()) -> tuple[list[dict], list[dict]]:
         """Validate this build's palette against a versioned registry.

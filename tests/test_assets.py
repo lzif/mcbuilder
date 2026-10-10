@@ -144,6 +144,23 @@ def test_fetch_26_2_falls_back_to_26_1_layout(tmp_path, monkeypatch):
     assert not (client / "assets/minecraft/textures/item/stick.png").exists()
 
 
+def test_fetch_downloads_textures_by_default(tmp_path, monkeypatch):
+    """`assets fetch` has no opt-out: a single fetch always pulls the
+    vanilla texture subtree along with the registry, models and
+    blockstates."""
+    jar_bytes = make_fake_jar()
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(jar_bytes))
+
+    dest = fetch("26.2", tmp_path)
+
+    # Registry...
+    assert (dest / "minecraft-data.json").is_file()
+    # ...and the full client subtree, textures included.
+    assert (dest / "client/assets/minecraft/textures/block/stone.png").is_file()
+    assert (dest / "client/assets/minecraft/models/block/cube_all.json").is_file()
+    assert (dest / "client/assets/minecraft/blockstates/stone.json").is_file()
+
+
 def test_fetch_extracts_version_json_when_present(tmp_path, monkeypatch):
     # The jar root's version.json carries the authoritative DataVersion
     # ("world_version"); the .nbt exporter prefers it over its table.

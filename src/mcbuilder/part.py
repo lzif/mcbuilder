@@ -123,17 +123,64 @@ def pillar(*, height: int, block: str) -> Geometry:
     return geo
 
 
+def _length_from_target(
+    dir_key: str, target: tuple[int, int, int]
+) -> int:
+    """Derive the run length from a relative top-step target.
+
+    ``target`` is the (x, y, z) the TOP step must occupy, relative to the
+    geometry origin (the first/lowest step's base). Step ``i`` sits at
+    ``(i*dx, i, i*dz)``, so the top step of a ``length``-step run is at
+    ``((length-1)*dx, length-1, (length-1)*dz)`` — the derived length is
+    ``target_y + 1``. ``ValueError`` unless ``target`` lies on the 1:1
+    diagonal from the origin toward ``dir_key`` (zero perpendicular
+    offset, horizontal travel along the direction equal to the rise, and
+    the rise non-negative).
+    """
+    try:
+        tx, ty, tz = tuple(target)
+    except (TypeError, ValueError):
+        raise ValueError(f"stairs_run: target must be 3 ints, got {target!r}")
+    for v in (tx, ty, tz):
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise ValueError(f"stairs_run: target coordinates must be ints, got {target!r}")
+    dx, dz = _DIRECTIONS[dir_key]
+    along = dx * tx + dz * tz          # horizontal travel toward the direction
+    perp = dz * tx - dx * tz           # horizontal offset perpendicular to it
+    if perp != 0 or along != ty or ty < 0:
+        raise ValueError(
+            f"stairs_run: target {tuple(target)!r} is not reachable from the "
+            f"origin ascending {dir_key}: the run climbs 1 block per 1 block "
+            f"of horizontal travel, so the target needs zero perpendicular "
+            f"offset and horizontal travel equal to the rise (both >= 0)"
+        )
+    return ty + 1
+
+
 def stairs_run(
     *,
     direction: str,
-    length: int,
+    length: int | None = None,
     block: str,
     width: int = 1,
+    target: tuple[int, int, int] | None = None,
 ) -> Geometry:
     """Straight staircase ascending towards ``direction``, relative coords.
 
     Step ``i`` sits at ``(i*dx, i, i*dz)`` — one block of horizontal
     travel per one block of rise, starting at the geometry origin.
+
+    Give exactly one of ``length`` / ``target`` (``ValueError`` if both
+    or neither):
+
+    - ``length``: the number of steps (the old contract).
+    - ``target``: the (x, y, z) the TOP (highest, last) step must
+      occupy, relative to the origin (the first step's base). The run
+      length is derived as ``target_y + 1`` — the top step is
+      ``((length-1)*dx, length-1, (length-1)*dz)``, which equals
+      ``target``. ``ValueError`` if the target isn't on the run's 1:1
+      diagonal (zero perpendicular offset, horizontal travel equal to
+      the rise, rise >= 0).
 
     Facing rule (the factory computes this, the agent never hand-guesses):
     each step's stairs block gets ``facing`` = the OPPOSITE of the ascent
@@ -141,9 +188,21 @@ def stairs_run(
     north means facing south), matching the vanilla placement convention.
 
     ``width > 1`` widens the run along the horizontal axis perpendicular
-    to ``direction``, toward the positive side from the origin.
+    to ``direction``, toward the positive side from the origin; the top
+    step's base cell (w=0) is the one that lands on ``target``.
     """
     dir_key = _check_direction(direction, "stairs_run")
+    if length is not None and target is not None:
+        raise ValueError(
+            "stairs_run: length and target are mutually exclusive — "
+            "give exactly one"
+        )
+    if length is None and target is None:
+        raise ValueError(
+            "stairs_run: one of length or target is required"
+        )
+    if target is not None:
+        length = _length_from_target(dir_key, target)
     if isinstance(length, bool) or not isinstance(length, int) or length < 1:
         raise McbuilderError(f"stairs_run: length must be an int >= 1, got {length!r}")
     if isinstance(width, bool) or not isinstance(width, int) or width < 1:

@@ -507,3 +507,49 @@ def test_lantern_crossbars_no_black_smear():
         # old PIL-QUAD bug the smear covered >40% of the bar region.
         assert black_frac < 0.30, \
             f"black smear covers {black_frac:.1%} of bar region"
+
+
+# ---------------------------------------------------------------------------
+# stair-row notch quirk (issue #1, item 1)
+# ---------------------------------------------------------------------------
+
+def test_stair_row_notches_are_real_geometry(tmp_path, assets_root):
+    """Adjacent stair rows leave 0.5-block see-through notches.
+
+    DOCUMENTED QUIRK (not a bug): a stair block is a half-slab plus a
+    half-height tall element. When rows ascend 1-up/1-over with the tall
+    half facing *away* from the next row (as ``roof_gable`` places them),
+    a real 0.5-block slot sits between rows — vanilla Minecraft has the
+    identical slot. From a high isometric angle the renderer correctly
+    shows through it to the background (the rows are floating here).
+
+    This test pins that the faithful tier and the trusted tier AGREE the
+    notches exist (both show background between the rows). If the
+    faithful tier ever diverges — hiding real notches or inventing gaps
+    the trusted tier doesn't see — this fails. See GUIDE §10.
+    """
+    import mcbuilder as mb
+    with mb.Build(seed=1) as b:
+        # Two stair rows ascending south, tall halves facing north (away
+        # from the next row) — the roof_gable arrangement.
+        for x in range(4):
+            b.set(x, 0, 0, "test_stairs[facing=north]")
+            b.set(x, 1, 1, "test_stairs[facing=north]")
+
+    def bg_fraction(tier):
+        out = tmp_path / tier
+        paths = b.render(out, views=["iso"], assets_dir=assets_root,
+                         tier=tier, presentation=False, title=None)
+        a = np.array(Image.open(paths[0]).convert("RGB"))
+        bg = tuple(a[0, 0])
+        return ((a == bg).all(axis=2)).mean()
+
+    faithful_bg = bg_fraction("faithful")
+    trusted_bg = bg_fraction("trusted")
+    # Both tiers see background through the inter-row notches. (Exact
+    # fractions differ — different shading — but both must be well above
+    # the ~background-only-outside-silhouette level.)
+    assert faithful_bg > 0.05, \
+        f"faithful shows no inter-row notch (bg frac {faithful_bg:.3f})"
+    assert trusted_bg > 0.05, \
+        f"trusted shows no inter-row notch (bg frac {trusted_bg:.3f})"

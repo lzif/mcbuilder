@@ -112,7 +112,9 @@ LostQoL `StructurePaster` applies server-side, so a design verified
 here pastes correctly at all four rotations.
 
 Core DSL methods on `BUILD`: `set(x, y, z, block)`, `box(c1, c2, block)`,
-`walls(c1, c2, block)`, `floor(c1, c2, block)`. Block strings are canonical
+`walls(c1, c2, block)`, `floor(c1, c2, block)`, `carve(c1, c2)` (removes
+the inclusive corner box — the subtractive complement of `box`;
+removed cells read as unset, not air). Block strings are canonical
 `minecraft:name[prop=val,...]{nbt}` — property order never matters.
 
 **Partial properties are legal and take vanilla defaults.** You may write
@@ -124,6 +126,26 @@ the `.nbt` palette carries exactly the properties you specified, and
 Minecraft resolves the rest to defaults at paste time (previews use the
 same defaults). When the default matters to your build — `waterlogged`,
 `hanging`, `facing` — write the property explicitly.
+
+## Introspection
+
+Read the build back without dropping to numpy — all read-only, no
+`with BUILD:` needed:
+
+- `BUILD.get(x, y, z)` → canonical block string at that cell, or `None`
+  when the cell is empty or carved air.
+- `BUILD.count(block)` → number of cells holding `block` (exact match
+  on the canonical blockstate).
+- `BUILD.find(block)` → sorted list of `(x, y, z)` tuples holding
+  `block`.
+
+**`to_dense()` axis convention** — the trap to avoid:
+`BUILD.grid.to_dense()` returns `(array, palette, provenance)` with
+`array.shape == (sx, sy, sz)` and `array[i, j, k]` == the cell at
+`(minx+i, miny+j, minz+k)`. **Axis 0 is X, axis 1 is Y, axis 2 is Z —
+the mapping is direct, not transposed**: never index `array[z, y, x]`.
+Never-placed cells read as `-1` (`UNSET`); explicitly carved
+`"minecraft:air"` reads as air's palette index.
 
 ## Block versions
 

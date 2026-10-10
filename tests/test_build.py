@@ -214,6 +214,43 @@ def test_roof_gable_preserves_other_props_and_nbt():
     assert props["facing"] == "north"
 
 
+def _roof_dense(**kwargs):
+    b = Build()
+    with b:
+        b.roof_gable((0, 0, 0), (4, 6, 4), "minecraft:oak_stairs", "x", **kwargs)
+    arr, palette, _ = b.grid.to_dense()
+    return arr.shape, arr.tolist(), palette
+
+
+def test_roof_gable_eave_height_explicit_matches_inferred():
+    # corners' Y is 6/0 here; inferred eave = min(y) = 0, so eave_height=0
+    # must produce identical voxels.
+    inferred = _roof_dense()
+    explicit = _roof_dense(eave_height=0)
+    assert inferred[0] == explicit[0]
+    assert inferred[1] == explicit[1]
+    assert inferred[2] == explicit[2]
+
+
+def test_roof_gable_eave_height_decouples_from_corners_y():
+    b = Build()
+    with b:
+        # Corners say y=5, but the eave is explicitly placed at y=0.
+        b.roof_gable((0, 5, 0), (4, 5, 4), "minecraft:oak_stairs", "x", eave_height=0)
+    assert b.grid.bounds() == ((0, 0, 0), (4, 2, 4))
+
+
+def test_roof_gable_eave_height_must_be_int():
+    b = Build()
+    with b:
+        with pytest.raises(BuildError, match="eave_height"):
+            b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "x",
+                         eave_height="0")
+        with pytest.raises(BuildError, match="eave_height"):
+            b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "x",
+                         eave_height=True)
+
+
 # -- recenter ---------------------------------------------------------------
 
 
@@ -403,3 +440,212 @@ def test_one_shots_still_require_batch_scope():
         b.box((0, 0, 0), (1, 1, 1), "minecraft:stone")
     with pytest.raises(BuildError, match=r"placements must be inside"):
         b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs", "x")
+
+
+# -- introspection: get / count / find ---------------------------------------
+
+
+def test_get_returns_block_string():
+    b = Build()
+    with b:
+        b.set(3, 4, 5, "minecraft:stone")
+    assert b.get(3, 4, 5) == "minecraft:stone"  # read-only: outside `with`
+
+
+def test_get_returns_none_for_unplaced_cell():
+    b = Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:stone")
+    assert b.get(9, 9, 9) is None
+    assert b.get(1, 0, 0) is None
+
+
+def test_get_returns_none_for_explicit_air():
+    b = Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:stone")
+        b.set(0, 0, 0, "minecraft:air")  # carve by air: get still reads None
+    assert b.get(0, 0, 0) is None
+
+
+def test_get_returns_canonical_form_with_props():
+    b = Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:oak_stairs[half=top,facing=south]")
+    assert b.get(0, 0, 0) == "minecraft:oak_stairs[facing=south,half=top]"
+
+
+def test_count_returns_exact_int():
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (2, 2, 2), "minecraft:stone")
+        b.set(0, 0, 0, "minecraft:dirt")  # overwrite one cell
+    assert b.count("minecraft:stone") == 26
+    assert b.count("minecraft:dirt") == 1
+    assert b.count("minecraft:gold_block") == 0
+
+
+def test_count_canonicalizes_query_block():
+    b = Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:oak_stairs[facing=north,half=top]")
+    # property order in the query never matters ...
+    assert b.count("minecraft:oak_stairs[half=top,facing=north]") == 1
+    # ... but the property *set* must match verbatim
+    assert b.count("minecraft:oak_stairs[facing=north]") == 0
+
+
+def test_count_air_counts_carved_cells():
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (2, 0, 2), "minecraft:stone")
+        b.set(1, 0, 1, "minecraft:air")
+    assert b.count("minecraft:air") == 1
+    assert b.count("minecraft:stone") == 8
+
+
+def test_find_returns_sorted_coord_list():
+    b = Build()
+    with b:
+        b.set(5, 0, 0, "minecraft:gold_block")
+        b.set(0, 9, 0, "minecraft:gold_block")
+        b.set(0, 0, 3, "minecraft:gold_block")
+        b.set(1, 1, 1, "minecraft:stone")
+    assert b.find("minecraft:gold_block") == [(0, 0, 3), (0, 9, 0), (5, 0, 0)]
+    assert b.find("minecraft:stone") == [(1, 1, 1)]
+    assert b.find("minecraft:dirt") == []
+
+
+def test_find_uses_canonical_exact_match():
+    b = Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:oak_stairs[facing=north]")
+        b.set(1, 0, 0, "minecraft:oak_stairs[facing=north,half=top]")
+    assert b.find("minecraft:oak_stairs[facing=north]") == [(0, 0, 0)]
+    assert b.find("minecraft:oak_stairs[half=top,facing=north]") == [(1, 0, 0)]
+
+
+def test_count_find_reject_malformed_block():
+    b = Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:stone")
+    with pytest.raises(ValueError):
+        b.count("not a block[[[")
+    with pytest.raises(ValueError):
+        b.find("not a block[[[")
+
+
+def test_to_dense_axis_convention_axis0_is_x_axis2_is_z():
+    """Pin the axis trap: array[i,j,k] == cell (minx+i, miny+j, minz+k).
+
+    A non-cubic bbox makes a transposed mapping fail loudly: a run of
+    3 along X must give shape (3, 1, 1), not (1, 1, 3).
+    """
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (2, 0, 0), "minecraft:stone")  # 3 long in X
+    arr, _, _ = b.grid.to_dense()
+    assert arr.shape == (3, 1, 1)
+
+    b = Build()
+    with b:
+        b.box((5, 7, 9), (5, 7, 11), "minecraft:stone")  # 3 long in Z, offset min
+    arr, palette, _ = b.grid.to_dense()
+    assert arr.shape == (1, 1, 3)
+    # minx=5, miny=7, minz=9: arr[0,0,2] == cell (5, 7, 11)
+    assert palette[arr[0, 0, 2]] == "minecraft:stone"
+    # and the Y axis: a vertical run
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (0, 4, 0), "minecraft:stone")
+    arr, _, _ = b.grid.to_dense()
+    assert arr.shape == (1, 5, 1)
+
+
+# -- carve: the subtractive primitive -----------------------------------------
+
+
+def test_carve_removes_exactly_the_box_region():
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (4, 4, 4), "minecraft:stone")  # 125 cells
+        b.carve((1, 1, 1), (3, 3, 3))  # hollow out the center
+    assert b.count("minecraft:stone") == 125 - 27
+    # carved interior reads as unset ...
+    assert b.get(2, 2, 2) is None
+    assert b.find("minecraft:stone") == sorted(
+        (x, y, z)
+        for x in range(5)
+        for y in range(5)
+        for z in range(5)
+        if not (1 <= x <= 3 and 1 <= y <= 3 and 1 <= z <= 3)
+    )
+    # ... and everything outside the carved box is untouched
+    assert b.get(0, 0, 0) == "minecraft:stone"
+    assert b.get(4, 4, 4) == "minecraft:stone"
+    arr, _, _ = b.grid.to_dense()
+    assert arr[2, 2, 2] == -1  # UNSET: carved cells are deleted, not air
+
+
+def test_carve_corners_any_order_inclusive():
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (2, 2, 2), "minecraft:stone")
+        b.carve((2, 2, 2), (0, 0, 0))  # reversed corners: same box
+    assert b.count("minecraft:stone") == 0
+    assert b.grid.to_dense()[0].shape == (0, 0, 0)
+
+
+def test_carve_empty_region_is_noop():
+    b = Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:stone")
+        b.carve((10, 10, 10), (12, 12, 12))  # nothing there: must not raise
+    assert b.count("minecraft:stone") == 1
+    assert b.get(0, 0, 0) == "minecraft:stone"
+
+
+def test_carve_removes_outright_not_air():
+    """carve deletes cells (UNSET); set-to-air keeps a carved air cell."""
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (3, 0, 0), "minecraft:stone")  # 4 cells
+        b.carve((1, 0, 0), (1, 0, 0))  # delete the second cell outright
+        b.set(2, 0, 0, "minecraft:air")  # carve the third cell with air
+    arr, palette, _ = b.grid.to_dense()
+    from mcbuilder.voxels import AIR, UNSET
+
+    # non-air bbox is ((0,0,0),(3,0,0)); both carved cells sit inside it
+    assert palette[arr[0, 0, 0]] == "minecraft:stone"
+    assert arr[1, 0, 0] == UNSET  # carved: deleted, reads as unset
+    assert palette[arr[2, 0, 0]] == AIR  # carved air: palette index, not UNSET
+    assert palette[arr[3, 0, 0]] == "minecraft:stone"
+    assert b.get(1, 0, 0) is None
+    assert b.get(2, 0, 0) is None  # get can't tell them apart — by design
+    assert b.count("minecraft:air") == 1
+    assert b.count("minecraft:stone") == 2
+
+
+def test_carve_requires_batch_scope():
+    b = Build()
+    with pytest.raises(BuildError, match=r"placements must be inside `with BUILD:`"):
+        b.carve((0, 0, 0), (1, 1, 1))
+
+
+def test_carve_validates_corners_like_box():
+    b = Build()
+    with b:
+        with pytest.raises(BuildError, match="3 ints"):
+            b.carve((0, 0), (1, 1, 1))
+        with pytest.raises(BuildError, match="must be ints"):
+            b.carve((0, 0, 0.5), (1, 1, 1))
+
+
+def test_carve_single_cell():
+    b = Build()
+    with b:
+        b.box((0, 0, 0), (1, 0, 1), "minecraft:stone")
+        b.carve((0, 0, 0), (0, 0, 0))
+    assert b.count("minecraft:stone") == 3
+    assert b.get(0, 0, 0) is None
+    assert b.get(1, 0, 1) == "minecraft:stone"

@@ -109,6 +109,88 @@ def test_stairs_run_invalid_length_width():
         parts.stairs_run(FakeBuild(), (0, 0, 0), "north", 3, STAIR, width=0)
 
 
+# ------------------------------------------------------- stairs_run target=
+
+
+def test_stairs_run_target_places_top_step_exactly():
+    """target= is the absolute cell the TOP (highest) step must occupy."""
+    b = FakeBuild()
+    parts.stairs_run(b, (10, 20, 30), "north", block=STAIR, target=(10, 24, 26))
+    # 5 steps ascending north: top step is start + 4 toward north = (10, 24, 26)
+    assert len(b.placements) == 5
+    expected = "minecraft:oak_stairs[facing=south,half=bottom]"
+    assert b.placements[(10, 24, 26)] == expected
+    for i in range(5):
+        assert b.placements[(10, 20 + i, 30 - i)] == expected
+
+
+def test_stairs_run_target_matches_manual_length():
+    """Derived length from target= equals the explicit length= contract."""
+    for direction, target in [
+        ("east", (3, 3, 0)),
+        ("west", (-4, 4, 5)),
+        ("south", (2, 2, 7)),
+        ("north", (-1, 6, -6)),
+    ]:
+        b_len, b_tgt = FakeBuild(), FakeBuild()
+        dx, dz = {"north": (0, -1), "south": (0, 1), "east": (1, 0), "west": (-1, 0)}[
+            direction
+        ]
+        rise = target[1]
+        start = (target[0] - rise * dx, 0, target[2] - rise * dz)
+        parts.stairs_run(b_len, start, direction, rise + 1, STAIR)
+        parts.stairs_run(b_tgt, start, direction, block=STAIR, target=target)
+        assert b_tgt.placements == b_len.placements
+
+
+def test_stairs_run_target_same_cell_is_one_step():
+    """target == start is a valid 1-step run."""
+    b = FakeBuild()
+    parts.stairs_run(b, (5, 5, 5), "east", block=STAIR, target=(5, 5, 5))
+    assert b.placements == {
+        (5, 5, 5): "minecraft:oak_stairs[facing=west,half=bottom]"
+    }
+
+
+def test_stairs_run_target_unreachable():
+    b = FakeBuild()
+    # rise != horizontal travel (off the 1:1 diagonal)
+    with pytest.raises(ValueError, match="not reachable"):
+        parts.stairs_run(b, (0, 0, 0), "east", block=STAIR, target=(3, 2, 0))
+    # nonzero perpendicular offset
+    with pytest.raises(ValueError, match="not reachable"):
+        parts.stairs_run(b, (0, 0, 0), "east", block=STAIR, target=(3, 3, 1))
+    # target below the start
+    with pytest.raises(ValueError, match="not reachable"):
+        parts.stairs_run(b, (0, 5, 0), "north", block=STAIR, target=(0, 4, -1))
+    # travel away from the direction (negative along)
+    with pytest.raises(ValueError, match="not reachable"):
+        parts.stairs_run(b, (0, 0, 0), "east", block=STAIR, target=(-2, 2, 0))
+    # malformed target
+    with pytest.raises(ValueError, match="target"):
+        parts.stairs_run(b, (0, 0, 0), "east", block=STAIR, target=(1, 2))
+
+
+def test_stairs_run_length_and_target_mutually_exclusive():
+    b = FakeBuild()
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        parts.stairs_run(b, (0, 0, 0), "east", 4, STAIR, target=(3, 3, 0))
+    with pytest.raises(ValueError, match="one of length or target"):
+        parts.stairs_run(b, (0, 0, 0), "east", block=STAIR)
+
+
+def test_stairs_run_target_build_delegate():
+    """BUILD.stairs_run accepts target= the same way."""
+    from mcbuilder.build import Build
+
+    b = Build()
+    with b:
+        geo = b.stairs_run((0, 0, 0), "south", block=STAIR, target=(0, 2, 2))
+    assert len(geo.cells()) == 3
+    (minx, miny, minz), (maxx, maxy, maxz) = geo.bounds()
+    assert (maxx, maxy, maxz) == (0, 2, 2)
+
+
 # ---------------------------------------------------------------------- pillar
 
 def test_pillar_height_and_verbatim_block():

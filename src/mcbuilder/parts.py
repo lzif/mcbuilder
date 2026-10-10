@@ -45,15 +45,31 @@ def stairs_run(
     build,
     start: tuple[int, int, int],
     direction: str,
-    length: int,
-    block: str,
+    length: int | None = None,
+    block: str | None = None,
     width: int = 1,
+    *,
+    target: tuple[int, int, int] | None = None,
 ) -> Geometry:
     """Straight staircase ascending towards ``direction``.
 
     ``start`` is the (x, y, z) of the FIRST (lowest) step's base position.
     Step ``i`` sits at ``(start_x + i*dx, start_y + i, start_z + i*dz)`` —
     one block of horizontal travel per one block of rise.
+
+    Give exactly one of ``length`` / ``target`` (``ValueError`` if both
+    or neither):
+
+    - ``length``: the number of steps (the old contract).
+    - ``target``: the absolute (x, y, z) the TOP (highest, last) step
+      must occupy — no landing math needed. The run length is derived
+      as ``target_y - start_y + 1``: the top step is
+      ``start + (length-1)`` toward ``direction`` and ``start_y +
+      (length-1)`` up, which equals ``target``. ``ValueError`` if
+      ``target`` isn't reachable: it must lie on the 1:1 diagonal from
+      ``start`` toward ``direction`` (zero perpendicular offset,
+      horizontal travel along the direction equal to the rise, and the
+      rise >= 0). ``target == start`` is a valid 1-step run.
 
     Facing rule (the part computes this, the agent never hand-guesses):
     each step's stairs block gets ``facing`` = the OPPOSITE of the ascent
@@ -68,14 +84,26 @@ def stairs_run(
 
     ``width > 1`` widens the run along the horizontal axis perpendicular
     to ``direction``, extending toward the positive side from ``start``:
-    north/south runs widen along +X, east/west runs widen along +Z.
+    north/south runs widen along +X, east/west runs widen along +Z. The
+    top step's base cell (w=0) is the one that lands on ``target``.
 
     Sugar for ``build.place(mb.part.stairs_run(...), at=start)``.
 
     Returns the placed :class:`Geometry` (absolute coordinates).
     """
+    if block is None:
+        raise ValueError("stairs_run: block is required")
+    rel_target = None
+    if target is not None:
+        try:
+            tx, ty, tz = tuple(target)
+        except (TypeError, ValueError):
+            raise ValueError(f"stairs_run: target must be 3 ints, got {target!r}")
+        sx, sy, sz = tuple(start)
+        rel_target = (tx - sx, ty - sy, tz - sz)
     geo = _part.stairs_run(
-        direction=direction, length=length, block=block, width=width
+        direction=direction, length=length, block=block, width=width,
+        target=rel_target,
     )
     build.place(geo, at=start)
     return _at_absolute(geo, start)

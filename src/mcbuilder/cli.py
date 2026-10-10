@@ -3,6 +3,7 @@
 Subcommands:
   check   validate a builder script (fast loop: no rendering, no artifact)
   run     validate + export + render previews into an auto-versioned run dir
+  diff    compare two runs' voxel data (added/removed/replaced cells)
   assets  fetch/cache Minecraft assets (minecraft-data + vanilla client assets)
 
 The builder script must define module-level ``BUILD`` (a ``mcbuilder.Build``
@@ -27,6 +28,7 @@ import numpy as np
 from mcbuilder import assets as assets_mod
 from mcbuilder import build as build_mod
 from mcbuilder import config as config_mod
+from mcbuilder import diff as diff_mod
 from mcbuilder import errors as errors_mod
 from mcbuilder import export_nbt as export_nbt_mod
 from mcbuilder import preview as preview_mod
@@ -598,6 +600,33 @@ def cmd_run(args) -> int:
     return 1 if errors else 0
 
 
+def cmd_diff(args) -> int:
+    """Compare two runs' voxel data; print the report and a comparison image.
+
+    Exit 0 when the runs are identical, 1 when differences were found
+    (classic ``diff(1)`` semantics), 1 with a clean stderr message on
+    errors such as unknown run ids.
+    """
+    runs_dir = Path(args.out)
+    if not runs_dir.is_dir():
+        raise CliError(f"runs directory not found: {runs_dir}")
+    if args.max < 0:
+        raise CliError(f"invalid --max: {args.max} (must be >= 0)")
+    a_dir = diff_mod.resolve_run_dir(runs_dir, args.run_a)
+    b_dir = diff_mod.resolve_run_dir(runs_dir, args.run_b)
+    diff = diff_mod.diff_run_dirs(a_dir, b_dir)
+    print(diff_mod.format_diff(diff, a_dir.name, b_dir.name, max_entries=args.max))
+    out_path = runs_dir / f"diff-{a_dir.name}-{b_dir.name}.png"
+    made = diff_mod.comparison_image(
+        a_dir, b_dir, diff, out_path, a_id=a_dir.name, b_id=b_dir.name
+    )
+    if made is not None:
+        print(f"  comparison: {made}")
+    else:
+        print("  comparison: no shared preview view — image skipped")
+    return 0 if diff.is_empty else 1
+
+
 def cmd_assets_fetch(args) -> int:
     cache_dir = (
         Path(args.cache_dir).expanduser() if args.cache_dir else DEFAULT_CACHE_ROOT
@@ -606,7 +635,10 @@ def cmd_assets_fetch(args) -> int:
         result = assets_mod.fetch(args.version, cache_dir)
     except errors_mod.AssetError as e:
         raise CliError(f"assets fetch failed: {e}") from None
-    print(result)
+    print(
+        f"fetched {args.version} -> {result} "
+        "(registry + vanilla client assets: textures, models, blockstates)"
+    )
     return 0
 
 
@@ -677,11 +709,48 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     r.set_defaults(func=cmd_run)
 
+    d = sub.add_parser(
+        "diff",
+        help="compare two runs' voxel data (added/removed/replaced cells)",
+        description=(
+            "Diff two mcbuild runs' voxel data, read from each run's .nbt "
+            "deploy artifact. Prints added/removed/replaced cells (capped "
+            "at --max entries) and writes a side-by-side preview comparison "
+            "PNG next to the run dirs when both runs share a preview view. "
+            "Positions are compared in each run's bbox-min frame. "
+            "Exit 0 when identical, 1 when differences were found."
+        ),
+    )
+    d.add_argument("run_a", help="older run id, e.g. run-001 (or just 001)")
+    d.add_argument("run_b", help="newer run id, e.g. run-002")
+    d.add_argument(
+        "--out",
+        default="dist/",
+        help="runs directory (default: dist/)",
+    )
+    d.add_argument(
+        "--max",
+        type=int,
+        default=30,
+        help="max change entries listed in the report (default: 30)",
+    )
+    d.set_defaults(func=cmd_diff)
+
     a = sub.add_parser("assets", help="manage cached Minecraft assets")
     asub = a.add_subparsers(dest="assets_cmd", required=True, metavar="<command>")
     f = asub.add_parser(
         "fetch",
-        help="fetch minecraft-data + vanilla client assets for a version",
+        help=(
+            "fetch minecraft-data registry + vanilla client assets "
+            "(textures, block models, blockstates) for a version"
+        ),
+        description=(
+            "One-time per Minecraft version: downloads the normalized "
+            "block registry and the vanilla client asset subtree "
+            "(textures/block, models/block, blockstates) used by the "
+            "faithful preview tier. There is no separate textures step — "
+            "textures always come with a fetch."
+        ),
     )
     f.add_argument("--version", required=True, help="Minecraft version, e.g. 26.2")
     f.add_argument(
