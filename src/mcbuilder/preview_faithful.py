@@ -861,7 +861,19 @@ _CHEST_LID_UVS = {
     "up": (14, 0, 28, 14),
     "down": (28, 0, 42, 14),
 }
-_CHEST_LATCH_UV = (0, 0, 6, 5)  # measured opaque bbox (all latch faces)
+# Per-face latch regions for the vanilla knob box (2,4,1) at uv(0,0):
+# standard box unwrap — west(d) | north(w) | east(d) | south(w) side
+# strip over y 1..5, top/bottom in the y 0..1 row. The old code painted
+# the whole 6x5 unwrap on every face (3:1 horizontal squash on the
+# 2-wide outward face, visible as streaks).
+_CHEST_LATCH_UVS = {
+    "north": (1, 1, 3, 5),  # outward face (width 2)
+    "south": (4, 1, 6, 5),  # inward face (width 2)
+    "east": (3, 1, 4, 5),   # depth 1
+    "west": (0, 1, 1, 5),   # depth 1
+    "up": (1, 0, 3, 1),
+    "down": (3, 0, 5, 1),
+}
 
 _FACING_Y_ROT = {"north": 0, "east": 90, "south": 180, "west": 270}
 _WALL_BANNER_Y_ROT = {"south": 0, "west": 90, "north": 180, "east": 270}
@@ -951,6 +963,8 @@ def _chest_quads(props, img):
 
     Canonical latch on the north face; ``facing`` rotates clockwise
     viewed from above ({north:0, east:90, south:180, west:270}).
+    The latch box (y 9/16..13/16) straddles the lid/body seam like
+    vanilla's knob (lid child at lid-relative y -1..+3).
     """
     if img.size != (64, 64):
         return None
@@ -965,9 +979,9 @@ def _chest_quads(props, img):
     parts += _entity_box_quads(
         (1 / 16, 10 / 16, 1 / 16), (15 / 16, 15 / 16, 15 / 16),
         _CHEST_LID_UVS, img)
-    latch_uvs = {face: _CHEST_LATCH_UV for face in _FACE_NAMES}
+    latch_uvs = _CHEST_LATCH_UVS
     parts += _entity_box_quads(
-        (7 / 16, 11 / 16, 0.0), (9 / 16, 15 / 16, 1 / 16),
+        (7 / 16, 9 / 16, 0.0), (9 / 16, 13 / 16, 1 / 16),
         latch_uvs, img)
     degrees = _FACING_Y_ROT.get(props.get("facing", "north"), 0)
     return _finalize_entity_quads(parts, degrees)

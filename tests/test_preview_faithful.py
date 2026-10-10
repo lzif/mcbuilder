@@ -450,6 +450,11 @@ def test_stair_row_notches_are_real_geometry(tmp_path, assets_root):
 H = pf._FLUID_SURFACE_HEIGHT
 
 
+def test_fluid_surface_height_is_eight_ninths():
+    """Pin the constant itself, not just geometry relative to it."""
+    assert pf._FLUID_SURFACE_HEIGHT == pytest.approx(8.0 / 9.0)
+
+
 def _quads_by_normal(canonical):
     quads, fb = pf.resolve_block_quads(canonical, None, {}, set())
     assert not fb, canonical
@@ -541,11 +546,12 @@ def _mean_rgb(tex):
 
 
 def _latch_quads(quads):
-    """Latch box quads: narrow horizontal footprint, y in 11/16..15/16."""
+    """Latch box quads: narrow horizontal footprint, y in 9/16..13/16
+    (straddles the lid/body seam like vanilla's knob)."""
     out = []
     for q in quads:
         pts = q[0]
-        if not all(11 / 16 - 1e-6 <= p[1] <= 15 / 16 + 1e-6 for p in pts):
+        if not all(9 / 16 - 1e-6 <= p[1] <= 13 / 16 + 1e-6 for p in pts):
             continue
         if max(p[0] for p in pts) - min(p[0] for p in pts) > 3 / 16 + 1e-6:
             continue
@@ -583,8 +589,17 @@ def test_chest_lid_above_body():
     quads, fb = pf.resolve_block_quads("minecraft:chest", _REAL_ROOT,
                                        tex_cache, set())
     assert not fb
-    body = [q for q in quads if _centroid([q])[1] < 0.6]
-    lid = [q for q in quads if _centroid([q])[1] >= 0.6]
+    # The latch straddles the seam (vanilla knob placement) — exclude it
+    # from the body/lid split and pin its span instead.
+    latch_ids = {id(q) for q in _latch_quads(quads)}
+    assert latch_ids, "no latch quads found"
+    rest = [q for q in quads if id(q) not in latch_ids]
+    assert min(p[1] for q in quads if id(q) in latch_ids
+               for p in q[0]) == pytest.approx(9 / 16)
+    assert max(p[1] for q in quads if id(q) in latch_ids
+               for p in q[0]) == pytest.approx(13 / 16)
+    body = [q for q in rest if _centroid([q])[1] < 0.6]
+    lid = [q for q in rest if _centroid([q])[1] >= 0.6]
     assert body and lid
     assert all(p[1] <= 0.63 for q in body for p in q[0])
     assert all(p[1] >= 0.62 for q in lid for p in q[0])
