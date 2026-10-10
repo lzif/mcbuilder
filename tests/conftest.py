@@ -27,6 +27,13 @@ def _write_tex(path: Path, color):
     Image.new("RGB", (16, 16), color).save(path)
 
 
+def _write_tex_rgba(path: Path, color):
+    """RGBA texture with genuine transparency (stays RGBA through
+    _load_texture_image — used for glass/leaves gap-2 fixtures)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (16, 16), color).save(path)
+
+
 def make_assets(root: Path) -> Path:
     """Minimal fake vanilla asset tree with a stair-like model.
 
@@ -194,6 +201,40 @@ def make_assets(root: Path) -> Path:
             {"apply": {"model": "test:block/test_leaf"}},
         ],
     })
+
+    # -- smooth-lighting fakes (gap2): hermetic AO classifier fixtures ----
+    def _gap2_block(name, tex_file, element_from=(0, 0, 0),
+                    element_to=(16, 16, 16)):
+        _write_json(models_dir / f"{name}.json", {
+            "textures": {"all": f"minecraft:block/{tex_file}"},
+            "elements": [
+                {"from": list(element_from), "to": list(element_to),
+                 "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                           for f in ("up", "down", "north", "south",
+                                     "west", "east")}},
+            ],
+        })
+        _write_json(bs_dir / f"{name}.json", {
+            "variants": {"": {"model": f"minecraft:block/{name}"}},
+        })
+
+    # full opaque cube, uniform mid-gray (render-level AO tests)
+    _write_tex(tex_dir / "ao_cube.png", (128, 128, 128))
+    _gap2_block("test_cube", "ao_cube")
+    # full cube, genuinely transparent texture -> non-occluding
+    _write_tex_rgba(tex_dir / "ao_glass.png", (150, 200, 220, 128))
+    _gap2_block("test_glass", "ao_glass")
+    # half slab -> partial -> non-occluding
+    _write_tex(tex_dir / "ao_slab.png", (128, 128, 128))
+    _gap2_block("test_slab", "ao_slab",
+                element_from=(0, 0, 0), element_to=(16, 8, 16))
+    # leaves: transparent texture but the name ends with "leaves" ->
+    # occluding (vanilla treats leaves as opaque cubes for AO)
+    _write_tex_rgba(tex_dir / "ao_leaves.png", (60, 140, 60, 128))
+    _gap2_block("test_leaves", "ao_leaves")
+    # missing texture file -> per-face opaque flat-color degradation ->
+    # occluding, and the classifier must not raise
+    _gap2_block("test_notex", "ao_missing_tex")
     return mc
 
 
