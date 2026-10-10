@@ -26,13 +26,13 @@ def _tier2():
             if (dx, dz) == (1, 1):
                 g.set(x, 2, z, AND)  # pedestal base / deliberate andesite accent
             elif (dx, dz) == (1, 0):
-                g.set(x, 2, z, "minecraft:stone_brick_stairs[facing=north,half=bottom]")
-            elif (dx, dz) == (1, 2):
                 g.set(x, 2, z, "minecraft:stone_brick_stairs[facing=south,half=bottom]")
+            elif (dx, dz) == (1, 2):
+                g.set(x, 2, z, "minecraft:stone_brick_stairs[facing=north,half=bottom]")
             elif (dx, dz) == (0, 1):
-                g.set(x, 2, z, "minecraft:stone_brick_stairs[facing=west,half=bottom]")
-            elif (dx, dz) == (2, 1):
                 g.set(x, 2, z, "minecraft:stone_brick_stairs[facing=east,half=bottom]")
+            elif (dx, dz) == (2, 1):
+                g.set(x, 2, z, "minecraft:stone_brick_stairs[facing=west,half=bottom]")
             else:
                 g.set(x, 2, z, _mossy(x + 7, z + 3))
     return g
@@ -76,7 +76,7 @@ def _canopy():
             if (dx, dz) == (1, 1):
                 g.set(x, 6, z, SB)
             elif (dx, dz) in ((1, 0), (1, 2), (0, 1), (2, 1)):
-                facing = {(1, 0): "north", (1, 2): "south", (0, 1): "west", (2, 1): "east"}[(dx, dz)]
+                facing = {(1, 0): "south", (1, 2): "north", (0, 1): "east", (2, 1): "west"}[(dx, dz)]
                 stair = (
                     "minecraft:mossy_stone_brick_stairs"
                     if (x + z) % 3 == 0

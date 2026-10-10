@@ -47,10 +47,10 @@ def _canopy():
     for x, y, z, b in field.cells():
         g.set(x + 1, 5, z + 1, b)
     for i in range(1, 6):
-        g.set(i, 5, 0, "minecraft:spruce_stairs[facing=north,half=bottom]")
-        g.set(i, 5, 6, "minecraft:spruce_stairs[facing=south,half=bottom]")
-        g.set(0, 5, i, "minecraft:spruce_stairs[facing=west,half=bottom]")
-        g.set(6, 5, i, "minecraft:spruce_stairs[facing=east,half=bottom]")
+        g.set(i, 5, 0, "minecraft:spruce_stairs[facing=south,half=bottom]")
+        g.set(i, 5, 6, "minecraft:spruce_stairs[facing=north,half=bottom]")
+        g.set(0, 5, i, "minecraft:spruce_stairs[facing=east,half=bottom]")
+        g.set(6, 5, i, "minecraft:spruce_stairs[facing=west,half=bottom]")
     for cx, cz in ((0, 0), (0, 6), (6, 0), (6, 6)):
         g.set(cx, 5, cz, SP)
     for dx in range(3):
@@ -59,13 +59,13 @@ def _canopy():
             if (dx, dz) == (1, 1):
                 g.set(x, 6, z, SP)
             elif (dx, dz) == (1, 0):
-                g.set(x, 6, z, "minecraft:spruce_stairs[facing=north,half=bottom]")
-            elif (dx, dz) == (1, 2):
                 g.set(x, 6, z, "minecraft:spruce_stairs[facing=south,half=bottom]")
+            elif (dx, dz) == (1, 2):
+                g.set(x, 6, z, "minecraft:spruce_stairs[facing=north,half=bottom]")
             elif (dx, dz) == (0, 1):
-                g.set(x, 6, z, "minecraft:spruce_stairs[facing=west,half=bottom]")
-            elif (dx, dz) == (2, 1):
                 g.set(x, 6, z, "minecraft:spruce_stairs[facing=east,half=bottom]")
+            elif (dx, dz) == (2, 1):
+                g.set(x, 6, z, "minecraft:spruce_stairs[facing=west,half=bottom]")
             else:
                 g.set(x, 6, z, SP)
     return g

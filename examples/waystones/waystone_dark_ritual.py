@@ -55,13 +55,13 @@ def _canopy():
             if (dx, dz) == (1, 1):
                 g.set(x, 6, z, AM)
             elif (dx, dz) == (1, 0):
-                g.set(x, 6, z, "minecraft:blackstone_stairs[facing=north,half=bottom]")
-            elif (dx, dz) == (1, 2):
                 g.set(x, 6, z, "minecraft:blackstone_stairs[facing=south,half=bottom]")
+            elif (dx, dz) == (1, 2):
+                g.set(x, 6, z, "minecraft:blackstone_stairs[facing=north,half=bottom]")
             elif (dx, dz) == (0, 1):
-                g.set(x, 6, z, "minecraft:blackstone_stairs[facing=west,half=bottom]")
-            elif (dx, dz) == (2, 1):
                 g.set(x, 6, z, "minecraft:blackstone_stairs[facing=east,half=bottom]")
+            elif (dx, dz) == (2, 1):
+                g.set(x, 6, z, "minecraft:blackstone_stairs[facing=west,half=bottom]")
             else:
                 g.set(x, 6, z, "minecraft:blackstone")
     return g

@@ -39,9 +39,9 @@ def floor_pattern(*, fn) -> mb.Geometry:
 def base_step(*, step_block: str, stair_block: str, center_block=None) -> mb.Geometry:
     """5x5 stepped base at y=1 (x,z 1..5): full 3x3 center, stair edges.
 
-    The 12 edge cells are bottom-half stairs facing outward (z=1 faces
-    north, z=5 faces south, x=1 faces west, x=5 faces east); the 4
-    corners are full step_block.
+    The 12 edge cells are bottom-half stairs facing inward (toward the
+    3x3 center = uphill): z=1 faces south, z=5 faces north, x=1 faces
+    east, x=5 faces west. The 4 corners are full step_block.
     """
     g = mb.Geometry()
     fill = center_block or step_block
@@ -49,10 +49,10 @@ def base_step(*, step_block: str, stair_block: str, center_block=None) -> mb.Geo
         for z in range(2, 5):
             g.set(x, 1, z, fill)
     for i in range(2, 5):
-        g.set(i, 1, 1, f"{stair_block}[facing=north,half=bottom]")
-        g.set(i, 1, 5, f"{stair_block}[facing=south,half=bottom]")
-        g.set(1, 1, i, f"{stair_block}[facing=west,half=bottom]")
-        g.set(5, 1, i, f"{stair_block}[facing=east,half=bottom]")
+        g.set(i, 1, 1, f"{stair_block}[facing=south,half=bottom]")
+        g.set(i, 1, 5, f"{stair_block}[facing=north,half=bottom]")
+        g.set(1, 1, i, f"{stair_block}[facing=east,half=bottom]")
+        g.set(5, 1, i, f"{stair_block}[facing=west,half=bottom]")
     for cx, cz in ((1, 1), (1, 5), (5, 1), (5, 5)):
         g.set(cx, 1, cz, step_block)
     return g
