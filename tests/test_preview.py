@@ -176,3 +176,65 @@ def test_fallback_color_is_hash_based():
     assert c1 == c2
     assert c1 == tuple(hashlib.md5(b"minecraft:glass").digest()[:3])
     assert _fallback_color("minecraft:stone") != c1
+
+
+def _write_json(path: Path, obj):
+    path.write_text(json.dumps(obj), encoding="utf-8")
+
+
+def _write_tex(mc: Path, name: str, color):
+    Image.new("RGB", (16, 16), color).save(mc / "textures" / "block" / name)
+
+
+def test_bare_blockstate_without_default_variant_resolves(tmp_path):
+    # Real vanilla blockstates (e.g. oak_log) ship NO empty-key default
+    # variant. A bare palette entry (no props) must still resolve via the
+    # vanilla default props (axis=y), not degrade to the fallback color.
+    mc = tmp_path / "assets" / "x" / "client" / "assets" / "minecraft"
+    (mc / "blockstates").mkdir(parents=True)
+    (mc / "models" / "block").mkdir(parents=True)
+    (mc / "textures" / "block").mkdir(parents=True)
+    _write_json(mc / "blockstates" / "oak_log.json",
+                {"variants": {
+                    "axis=x": {"model": "minecraft:block/oak_log"},
+                    "axis=y": {"model": "minecraft:block/oak_log"},
+                    "axis=z": {"model": "minecraft:block/oak_log"}}})
+    _write_json(mc / "models" / "block" / "oak_log.json",
+                {"parent": "minecraft:block/cube_column",
+                 "textures": {"end": "minecraft:block/oak_log_top",
+                              "side": "minecraft:block/oak_log"}})
+    _write_json(mc / "models" / "block" / "cube_column.json",
+                {"parent": "minecraft:block/block"})
+    _write_tex(mc, "oak_log.png", (90, 70, 40))
+    _write_tex(mc, "oak_log_top.png", (150, 120, 70))
+
+    arr = np.zeros((2, 2, 2), dtype=np.int32)
+    arr[0, 0, 0] = 1
+    grid = FakeGrid(arr, ["minecraft:air", "minecraft:oak_log"])  # no props
+    result = render(grid, tmp_path / "previews", parse_views("top"),
+                    tmp_path / "assets")
+    assert result.info["fallback_blocks"] == []
+
+
+def test_non_cube_model_maps_single_texture_var(tmp_path):
+    # Fence/torch-style models are not cube templates and expose a single
+    # texture var (``texture``/``torch``). The fast tier must map faces to
+    # it rather than render a flat fallback color.
+    mc = tmp_path / "assets" / "x" / "client" / "assets" / "minecraft"
+    (mc / "blockstates").mkdir(parents=True)
+    (mc / "models" / "block").mkdir(parents=True)
+    (mc / "textures" / "block").mkdir(parents=True)
+    _write_json(mc / "blockstates" / "oak_fence.json",
+                {"multipart": [{"apply": {"model": "minecraft:block/fence_post"}}]})
+    _write_json(mc / "models" / "block" / "fence_post.json",
+                {"parent": "minecraft:block/fence_post",
+                 "textures": {"texture": "minecraft:block/oak_planks"}})
+    _write_json(mc / "models" / "block" / "fence_inventory.json", {})
+    _write_tex(mc, "oak_planks.png", (140, 110, 70))
+
+    arr = np.zeros((2, 2, 2), dtype=np.int32)
+    arr[0, 0, 0] = 1
+    grid = FakeGrid(arr, ["minecraft:air", "minecraft:oak_fence"])
+    result = render(grid, tmp_path / "previews", parse_views("top"),
+                    tmp_path / "assets")
+    assert result.info["fallback_blocks"] == []
