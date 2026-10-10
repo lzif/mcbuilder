@@ -221,7 +221,11 @@ def _load_texture_image(root: Path, rel: str, cache: dict):
         return cache[rel]
     try:
         with Image.open(root / "textures" / f"{rel}.png") as im:
-            img = im.convert("RGB")
+            img = im.convert("RGBA")
+            # Keep RGBA only when the texture actually uses transparency
+            # (glass, leaves, stained glass...); opaque textures stay RGB.
+            if img.getchannel("A").getextrema() == (255, 255):
+                img = img.convert("RGB")
         mcmeta = root / "textures" / f"{rel}.png.mcmeta"
         if mcmeta.is_file():
             try:
@@ -439,6 +443,11 @@ def _order_corners_uv(corners, normal_name: str):
 def _shade_image(img: Image.Image, factor: float) -> Image.Image:
     if factor >= 1.0:
         return img
+    if img.mode == "RGBA":
+        # Shade RGB only — alpha is transparency, not brightness.
+        r, g, b, a = img.split()
+        shaded = [c.point(lambda v: min(255, int(v * factor))) for c in (r, g, b)]
+        return Image.merge("RGBA", (*shaded, a))
     return img.point(lambda v: min(255, int(v * factor)))
 
 
@@ -574,6 +583,8 @@ _FLUID_RGBA = {
     # translucent blue/orange cubes instead of the magenta fallback.
     "minecraft:water": (52, 120, 235, 150),
     "minecraft:lava": (255, 110, 20, 210),
+    # Chests are block entities (no JSON model): plain wooden box.
+    "minecraft:chest": (181, 140, 82, 255),
 }
 
 
