@@ -31,6 +31,13 @@ def _write_tex(path: Path, color):
     Image.new("RGB", (16, 16), color).save(path)
 
 
+def _write_tex_rgba(path: Path, color):
+    """RGBA texture with genuine transparency (stays RGBA through
+    _load_texture_image — used for glass/leaves gap-2 fixtures)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (16, 16), color).save(path)
+
+
 def make_assets(root: Path) -> Path:
     """Minimal fake vanilla asset tree with a stair-like model.
 
@@ -116,6 +123,40 @@ def make_assets(root: Path) -> Path:
              "apply": {"model": "minecraft:block/test_post"}},
         ]
     })
+
+    # -- smooth-lighting fakes (gap2) ----------------------------------
+    def _gap2_block(name, tex_file, element_from=(0, 0, 0),
+                    element_to=(16, 16, 16)):
+        _write_json(models_dir / f"{name}.json", {
+            "textures": {"all": f"minecraft:block/{tex_file}"},
+            "elements": [
+                {"from": list(element_from), "to": list(element_to),
+                 "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                           for f in ("up", "down", "north", "south",
+                                     "west", "east")}},
+            ],
+        })
+        _write_json(bs_dir / f"{name}.json", {
+            "variants": {"": {"model": f"minecraft:block/{name}"}},
+        })
+
+    # full opaque cube, uniform mid-gray (render-level AO tests)
+    _write_tex(tex_dir / "ao_cube.png", (128, 128, 128))
+    _gap2_block("test_cube", "ao_cube")
+    # full cube, genuinely transparent texture -> non-occluding
+    _write_tex_rgba(tex_dir / "ao_glass.png", (150, 200, 220, 128))
+    _gap2_block("test_glass", "ao_glass")
+    # half slab -> partial -> non-occluding
+    _write_tex(tex_dir / "ao_slab.png", (128, 128, 128))
+    _gap2_block("test_slab", "ao_slab",
+                element_from=(0, 0, 0), element_to=(16, 8, 16))
+    # leaves: transparent texture but the name ends with "leaves" ->
+    # occluding (vanilla treats leaves as opaque cubes for AO)
+    _write_tex_rgba(tex_dir / "ao_leaves.png", (60, 140, 60, 128))
+    _gap2_block("test_leaves", "ao_leaves")
+    # missing texture file -> per-face opaque flat-color degradation ->
+    # occluding, and the classifier must not raise
+    _gap2_block("test_notex", "ao_missing_tex")
     return mc
 
 
@@ -553,3 +594,283 @@ def test_stair_row_notches_are_real_geometry(tmp_path, assets_root):
         f"faithful shows no inter-row notch (bg frac {faithful_bg:.3f})"
     assert trusted_bg > 0.05, \
         f"trusted shows no inter-row notch (bg frac {trusted_bg:.3f})"
+
+
+# ---------------------------------------------------------------------------
+# gap 2: smooth lighting / ambient occlusion
+# ---------------------------------------------------------------------------
+
+def test_ao_open_face_uniform():
+    """An isolated cube's faces get uniform AO (all level 3): the draw
+    path must take the fast path, byte-identical to ao=None.
+
+    Part 1 (sampler): every corner vertex of every face of an isolated
+    cell samples level 3. Part 2 (draw): _draw_textured_quad with
+    ao=None vs ao=(1,1,1,1) produces an identical canvas.
+    """
+    occ = np.zeros((5, 5, 5), dtype=bool)  # all air
+    occ[2, 2, 2] = True  # the cell itself (never sampled, but realistic)
+    for normal in [(0, 1, 0), (0, -1, 0), (0, 0, -1),
+                   (0, 0, 1), (1, 0, 0), (-1, 0, 0)]:
+        ax = 0 if normal[0] else (1 if normal[1] else 2)
+        t1, t2 = [t for t in (0, 1, 2) if t != ax]
+        for u in (0.0, 1.0):
+            for v in (0.0, 1.0):
+                vl = [0.0, 0.0, 0.0]
+                vl[t1], vl[t2] = u, v
+                assert pf._vertex_ao_level(vl, normal, (1, 1, 1), occ) == 3, \
+                    f"open-face vertex {vl} normal {normal} must be level 3"
+    # draw-level: ao=None vs all-1.0 identical canvas
+    tex = Image.new("RGB", (16, 16), (90, 140, 200))
+    pts_uv = [(16, 0, 0, 0), (32, 16, 0, 16),
+              (16, 32, 16, 16), (0, 16, 16, 0)]
+    c1 = Image.new("RGB", (32, 32), (255, 255, 255))
+    c2 = Image.new("RGB", (32, 32), (255, 255, 255))
+    pf._draw_textured_quad(c1, pts_uv, tex)
+    pf._draw_textured_quad(c2, pts_uv, tex, ao=(1.0, 1.0, 1.0, 1.0))
+    assert np.array(c1).tolist() == np.array(c2).tolist()
+
+
+def test_ao_inner_corner_darkens(tmp_path, assets_root):
+    """Floor + wall inside corner: the floor's top face must be darker at
+    the inner corner than at the open edge (same face).
+
+    Scene: floor cell (0,0,0), occluders at (1,1,0) and (0,1,1). The
+    floor top-face vertex at local (1,.,1) sees both sides occluded
+    (level 0 -> x0.4); the vertex at (0,.,0) sees open air (level 3).
+    Rendered top-down with the uniform-gray test_cube texture, the
+    darkest decile of the face pixels (inner corner) must be strictly
+    darker than the brightest decile (open edge).
+
+    NOTE: assets_dir must be tmp_path (the fixture's parent):
+    _resolve_assets_root looks for <base>/client/assets/minecraft, so
+    passing the fixture value itself resolves to None and every block
+    renders as the magenta fallback cube.
+    """
+    import mcbuilder as mb
+    with mb.Build(seed=1) as b:
+        b.set(0, 0, 0, "test:test_cube")
+        b.set(1, 1, 0, "test:test_cube")
+        b.set(0, 1, 1, "test:test_cube")
+        out = tmp_path / "corner"
+        paths = b.render(out, views=["top"], assets_dir=tmp_path,
+                         tier="faithful", presentation=True, title=None)
+    a = np.array(Image.open(paths[0]).convert("RGB")).astype(np.int32)
+    # The test texture is uniform gray (128,128,128); top faces are
+    # shade 1.0, and the AO multiply is per-channel identical, so block
+    # pixels stay gray (r==g==b, ±1 for the LANCZOS downscale).
+    # Background (244,241,235) and the soft shadow fringe are not gray.
+    gray = (np.abs(a[..., 0] - a[..., 1]) <= 1) & \
+           (np.abs(a[..., 1] - a[..., 2]) <= 1)
+    not_bg = np.abs(a[..., 0] - 244) > 8
+    mask = gray & not_bg
+    # Erode a few px to drop LANCZOS edge blends at the silhouette.
+    from PIL import ImageFilter
+    m = Image.fromarray(mask.astype(np.uint8) * 255)
+    interior = np.array(m.filter(ImageFilter.MinFilter(7))) > 0
+    vals = a[interior][..., 0]  # r == g == b here
+    assert len(vals) > 100, "expected a sizable uniform-gray face region"
+    lo = np.percentile(vals, 10)
+    hi = np.percentile(vals, 90)
+    inner = vals[vals <= lo].mean()
+    outer = vals[vals >= hi].mean()
+    assert inner < outer, \
+        f"inner corner {inner:.1f} not darker than open edge {outer:.1f}"
+    # The darkening is real AO, not noise: open edge ~full brightness.
+    assert outer > 120, \
+        f"open edge should stay near full brightness, got {outer:.1f}"
+    assert inner < 100, \
+        f"inner corner should be AO-darkened, got {inner:.1f}"
+
+
+def test_ao_level_sampler_unit():
+    """Unit test of the vanilla AO rule via _vertex_ao_level.
+
+    Padded grid (5,5,5); the sampled cell is array (1,1,1), face normal
+    +Y, vertex at local (0,.,0): side1 = array (0,2,1), side2 = array
+    (1,2,0), corner = array (0,2,0) — all in the face-adjacent layer.
+    """
+    def grid(*occluded):
+        occ = np.zeros((5, 5, 5), dtype=bool)
+        for (x, y, z) in occluded:
+            occ[x + 1, y + 1, z + 1] = True
+        return occ
+
+    n = (0, 1, 0)
+    v = (0.0, 1.0, 0.0)
+    assert pf._vertex_ao_level(v, n, (1, 1, 1), grid()) == 3
+    assert pf._vertex_ao_level(v, n, (1, 1, 1), grid((0, 2, 1))) == 2
+    assert pf._vertex_ao_level(
+        v, n, (1, 1, 1), grid((0, 2, 1), (0, 2, 0))) == 1
+    assert pf._vertex_ao_level(
+        v, n, (1, 1, 1), grid((0, 2, 1), (1, 2, 0))) == 0
+    # Interior vertex (e.g. a stair tread at 0.5): samples the cell
+    # directly outside the vertex, not the edge neighbors.
+    vi = (0.5, 1.0, 0.0)
+    assert pf._vertex_ao_level(
+        vi, n, (1, 1, 1), grid((1, 2, 1))) == 2
+    assert pf._vertex_ao_level(
+        vi, n, (1, 1, 1), grid((0, 2, 1))) == 3
+
+
+def test_ao_occlusion_classification(assets_root):
+    """Extended classifier checks (gap-2 dispatch mirror)."""
+    tc: dict = {}
+    occ = pf._block_occludes_ao
+    # Full opaque cube / partial / transparent-texture cases.
+    assert occ("test:test_cube", assets_root, tc) is True
+    assert occ("test:test_glass", assets_root, tc) is False
+    assert occ("test:test_slab", assets_root, tc) is False
+    assert occ("test:test_stairs[facing=east]", assets_root, tc) is False
+    # Leaves occlude even with a transparent texture (vanilla rule).
+    assert occ("test:test_leaves", assets_root, tc) is True
+    # Missing texture degrades to an opaque flat color -> occluding,
+    # and the classifier must not raise.
+    assert occ("test:test_notex", assets_root, tc) is True
+    # Fluids / air / explicit non-occluding set (no assets needed).
+    assert occ("minecraft:water", assets_root, tc) is False
+    assert occ("minecraft:lava", assets_root, tc) is False
+    assert occ("minecraft:air", assets_root, tc) is False
+    assert occ("minecraft:ice", assets_root, tc) is False
+    assert occ("minecraft:slime_block", assets_root, tc) is False
+    assert occ("minecraft:honey_block", assets_root, tc) is False
+    # Chest renders as a solid wooden box.
+    assert occ("minecraft:chest", assets_root, tc) is True
+
+
+def test_ao_tinted_leaves_composition():
+    """AO composes with a (gap-1) pre-tinted texture: tint x AO on RGB,
+    alpha untouched.
+
+    Simulates gap-1's output by pre-tinting the texture in the test.
+    The ±1 tolerance is float noise from the lstsq affine fit of the
+    constant 0.4 field (truncation to uint8); a broken composition
+    would be off by tens.
+    """
+    pts_uv = [(16, 0, 0, 0), (32, 16, 0, 16),
+              (16, 32, 16, 16), (0, 16, 16, 0)]
+    # Opaque pre-tinted texel: pixels must equal tint x 0.4 (±1).
+    tex = Image.new("RGBA", (16, 16), (200, 100, 50, 255))
+    c = Image.new("RGB", (32, 32), (255, 255, 255))
+    pf._draw_textured_quad(c, pts_uv, tex, ao=(0.4, 0.4, 0.4, 0.4))
+    r, g, b = c.load()[16, 16]
+    assert abs(r - 80) <= 1 and abs(g - 40) <= 1 and abs(b - 20) <= 1, \
+        f"want tint x 0.4 = (80,40,20) ±1, got {(r, g, b)}"
+    # Translucent texel: alpha must not be dimmed by AO. With alpha=128
+    # on a white canvas the blended result is (167,147,137) +/- 2; if AO
+    # also multiplied alpha the result would be ~(220,212,208).
+    tex2 = Image.new("RGBA", (16, 16), (200, 100, 50, 128))
+    c2 = Image.new("RGB", (32, 32), (255, 255, 255))
+    pf._draw_textured_quad(c2, pts_uv, tex2, ao=(0.4, 0.4, 0.4, 0.4))
+    r, g, b = c2.load()[16, 16]
+    assert abs(r - 167) <= 2 and abs(g - 147) <= 2 and abs(b - 137) <= 2, \
+        f"alpha must be untouched by AO, got {(r, g, b)}"
+
+
+def test_ao_entity_classification(assets_root):
+    """The entity path of the classifier is merge-order independent.
+
+    Pre-gap4 (no _try_entity_quads on the module) the entity step is
+    skipped and both names fall through to the model/fallback path,
+    matching the pre-gap4 render (magenta fallback cube -> occluding).
+    Post-gap4 the hasattr guard activates: banners are thin cloth
+    (non-occluding), the chest family is a near-full box (occluding).
+    """
+    tc: dict = {}
+    if hasattr(pf, "_try_entity_quads"):
+        assert pf._block_occludes_ao(
+            "minecraft:trapped_chest", assets_root, tc) is True
+        assert pf._block_occludes_ao(
+            "minecraft:white_banner", assets_root, tc) is False
+    else:
+        assert pf._block_occludes_ao(
+            "minecraft:trapped_chest", assets_root, tc) is True
+        assert pf._block_occludes_ao(
+            "minecraft:white_banner", assets_root, tc) is True
+
+
+def test_ao_deterministic(tmp_path, assets_root):
+    """Two renders of a mixed grid -> identical PNG bytes (md5).
+
+    NOTE: assets_dir is tmp_path (the fixture's parent); see
+    test_ao_inner_corner_darkens for why the fixture value itself
+    would render every block as the magenta fallback.
+    """
+    import hashlib
+    import mcbuilder as mb
+    digests = []
+    for i in range(2):
+        with mb.Build(seed=7) as b:
+            for x in range(4):
+                for z in range(4):
+                    b.set(x, 0, z, "test:test_cube")
+                    if (x + z) % 2 == 0:
+                        b.set(x, 1, z, "test:test_cube")
+                    if (x * z) % 3 == 0:
+                        b.set(x, 2, z, "test:test_glass")
+            out = tmp_path / f"run{i}"
+            paths = b.render(out, views=["iso"], assets_dir=tmp_path,
+                             tier="faithful", presentation=False, title=None)
+        digests.append(hashlib.md5(paths[0].read_bytes()).hexdigest())
+    assert digests[0] == digests[1], "AO render must be deterministic"
+
+
+class _FakeGrid:
+    """Duck-type of mcbuilder.voxels.VoxelGrid (mirrors test_preview.py)."""
+
+    def __init__(self, arr, palette):
+        self._arr = np.asarray(arr, dtype=np.int32)
+        self._palette = list(palette)
+
+    def to_dense(self):
+        return self._arr, self._palette, {}
+
+
+# Pre-AO baseline for test_ao_perf_smoke: median of 3 renders of the
+# same 12x12x12 scene on main @ ab39e88 (pre-AO), presentation=False,
+# single view, real assets, measured on this VM 2026-10-10 (1.28s;
+# with-AO measured 1.86s = 1.45x in the same quiet period).
+#
+# DEVIATION from the plan's "< 2x" example: this VM's timing noise is
+# large (shared container; identical with-AO code measured 1.86s quiet
+# vs 2.45-3.5s under concurrent load — up to ~1.9x on NO code change),
+# so a single-shot 2x bound flakes environmentally. The test instead
+# warms up, takes best-of-3, and allows 2.5x: still catches any
+# sustained algorithmic regression (best-of-3 filters spikes, not
+# shifts) without failing on noise.
+_AO_PERF_BASELINE_S = 1.28
+_AO_PERF_BOUND = 2.5 * _AO_PERF_BASELINE_S
+
+
+@needs_real_assets
+def test_ao_perf_smoke(tmp_path):
+    """AO render of a 12x12x12 mixed stone/air grid stays within the
+    calibrated bound (best-of-3 after warmup; see _AO_PERF_BASELINE_S)."""
+    import time
+    arr = np.zeros((12, 12, 12), dtype=np.int32)
+    for x in range(12):
+        for y in range(12):
+            for z in range(12):
+                if (x * 7 + y * 13 + z * 5) % 3:
+                    arr[x, y, z] = 1
+    grid = _FakeGrid(arr, ["minecraft:air", "minecraft:stone"])
+    views = parse_views("az045_el015")
+    # Warmup (page cache, PIL/numpy init): not timed.
+    pf.render(grid, str(tmp_path / "perf-warm"), views, _REAL_ROOT,
+              presentation=False, title=None)
+    best = min(
+        _timed_render(grid, tmp_path / f"perf-{i}", views)
+        for i in range(3)
+    )
+    assert best < _AO_PERF_BOUND, \
+        f"AO render best-of-3 took {best:.1f}s, over the " \
+        f"{_AO_PERF_BOUND:.1f}s bound (2.5x the {_AO_PERF_BASELINE_S}s " \
+        f"pre-AO baseline)"
+
+
+def _timed_render(grid, out_dir, views):
+    import time
+    t0 = time.perf_counter()
+    pf.render(grid, str(out_dir), views, _REAL_ROOT,
+              presentation=False, title=None)
+    return time.perf_counter() - t0
