@@ -947,7 +947,11 @@ def _fill_transparent_corners(img, corners):
 
     Vanilla entity textures have rounded corners (isolated transparent
     texels); our crops would otherwise carry 1-texel pinholes.
+    No-op on images without an alpha channel (fully-opaque textures
+    load as RGB — there is nothing transparent to fill).
     """
+    if img.mode != "RGBA":
+        return
     d = ImageDraw.Draw(img)
     for x, y in corners:
         for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):

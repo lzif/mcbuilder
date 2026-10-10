@@ -659,6 +659,18 @@ def test_chest_textures_per_variant():
         assert dist > 15, (other, means)
 
 
+def test_chest_opaque_entity_texture_no_crash(assets_root, tex_cache):
+    """A fully-opaque entity texture loads as RGB (no alpha channel) —
+    the corner-fill must no-op instead of raising."""
+    ent = assets_root / "textures" / "entity" / "chest"
+    ent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (64, 64), (150, 100, 50)).save(ent / "normal.png")
+    quads, fb = pf.resolve_block_quads("minecraft:chest", assets_root,
+                                       tex_cache, set())
+    assert not fb
+    assert len(quads) == 18
+
+
 def test_chest_missing_entity_texture_falls_back(assets_root, tex_cache):
     """No textures/entity/ in the cache → graceful degradation.
 
