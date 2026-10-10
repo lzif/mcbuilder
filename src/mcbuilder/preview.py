@@ -271,9 +271,16 @@ def _do_resolve(block_name: str, props: dict, root: Path):
     for model in reversed(chain):
         textures.update(model.get("textures", {}))
 
-    # Resolve "#" variable references.
-    def resolve(value: str, depth: int = 0) -> str | None:
-        if not value.startswith("#") or depth > 8:
+    # Resolve "#" variable references. 26.2+ models may use the texture
+    # metadata form {"sprite": "...", ...} instead of a plain string.
+    def _sprite(value):
+        if isinstance(value, dict):
+            return value.get("sprite", "")
+        return value
+
+    def resolve(value, depth: int = 0):
+        value = _sprite(value)
+        if not isinstance(value, str) or not value.startswith("#") or depth > 8:
             return value
         return resolve(textures.get(value[1:], ""), depth + 1)
 

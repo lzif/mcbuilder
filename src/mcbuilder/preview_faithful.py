@@ -275,8 +275,15 @@ def _resolve_model_elements_and_textures(model_ref: str, root: Path,
     for model in reversed(chain):
         textures.update(model.get("textures", {}))
 
-    def resolve(value: str, depth: int = 0):
-        if not value.startswith("#") or depth > 8:
+    def _sprite(value):
+        # 26.2+ texture metadata form: {"sprite": "...", ...}
+        if isinstance(value, dict):
+            return value.get("sprite", "")
+        return value
+
+    def resolve(value, depth: int = 0):
+        value = _sprite(value)
+        if not isinstance(value, str) or not value.startswith("#") or depth > 8:
             return value
         return resolve(textures.get(value[1:], ""), depth + 1)
 
