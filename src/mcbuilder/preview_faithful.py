@@ -569,6 +569,33 @@ def _fallback_cube_quads(fallback_color):
     return quads
 
 
+_FLUID_RGBA = {
+    # Fluids have no block model (special in-game renderer): render as
+    # translucent blue/orange cubes instead of the magenta fallback.
+    "minecraft:water": (52, 120, 235, 150),
+    "minecraft:lava": (255, 110, 20, 210),
+}
+
+
+def _fluid_cube_quads(rgba):
+    """Translucent fluid cube: 6 shaded RGBA quads (alpha preserved)."""
+    r, g, b, a = rgba
+    quads = []
+    f, t = (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
+    for face_name in _FACE_NAMES:
+        corners = _face_base_corners(face_name, f, t)
+        ordered = _order_corners_uv(corners, face_name)
+        n = _FACE_NORMALS[face_name]
+        factor = _SHADES[n]
+        img = Image.new(
+            "RGBA", (16, 16),
+            (min(255, int(r * factor)), min(255, int(g * factor)),
+             min(255, int(b * factor)), a),
+        )
+        quads.append((ordered, n, img))
+    return quads
+
+
 def resolve_block_quads(canonical: str, assets_root: Path | None,
                         tex_cache: dict, fallback_blocks: set | None = None):
     """Public helper: (quads, is_fallback) for one canonical block string."""
@@ -576,6 +603,9 @@ def resolve_block_quads(canonical: str, assets_root: Path | None,
     fallback_color = _FALLBACK_MAGENTA
     if fallback_blocks is None:
         fallback_blocks = set()
+    if name in _FLUID_RGBA:
+        # Intentionally styled (not a missing model): no fallback warning.
+        return _fluid_cube_quads(_FLUID_RGBA[name]), False
     if assets_root is None:
         return _fallback_cube_quads(fallback_color), True
     quads = _resolve_block_quads(
@@ -646,11 +676,21 @@ def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image):
     _oy, _ox = np.mgrid[0:bh, 0:bw]
     _tx = np.clip((a * _ox + b * _oy + c).astype(int), 0, tw_arr - 1)
     _ty = np.clip((d * _ox + e * _oy + f).astype(int), 0, th_arr - 1)
-    warped = Image.fromarray(tex_arr[_ty, _tx].astype(np.uint8), "RGB")
     mask = Image.new("L", (bw, bh), 0)
     ImageDraw.Draw(mask).polygon(
         [(sx - x0, sy - y0) for sx, sy, _, _ in pts_uv], fill=255)
-    canvas.paste(warped, (x0, y0), mask)
+    if tex.mode == "RGBA":
+        # Translucent quad (fluids): combine the quad-shape mask with the
+        # texture alpha so the paste blends with what's behind it.
+        warped_rgba = tex_arr[_ty, _tx].astype(np.uint8)
+        poly = np.array(mask).astype(np.float32) / 255.0
+        eff = (poly * warped_rgba[..., 3].astype(np.float32)
+               / 255.0 * 255.0).astype(np.uint8)
+        canvas.paste(Image.fromarray(warped_rgba[..., :3], "RGB"),
+                     (x0, y0), Image.fromarray(eff, "L"))
+    else:
+        warped = Image.fromarray(tex_arr[_ty, _tx].astype(np.uint8), "RGB")
+        canvas.paste(warped, (x0, y0), mask)
 
 
 def _soft_shadow_layer(W: int, H: int, proj_foot) -> Image.Image:

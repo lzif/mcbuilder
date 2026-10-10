@@ -337,8 +337,18 @@ def _face_tex_vars(images: dict, parent_leaf: str | None) -> dict[str, str | Non
     }
 
 
+_FLUID_FLAT = {
+    # Fluids have no block model (special in-game renderer); render them
+    # as flat blue/orange instead of the hash-based fallback color.
+    "minecraft:water": (52, 120, 235),
+    "minecraft:lava": (255, 110, 20),
+}
+
+
 def _fallback_color(block_name: str) -> tuple[int, int, int]:
     """Deterministic flat color per block name (md5, NOT builtin hash)."""
+    if block_name in _FLUID_FLAT:
+        return _FLUID_FLAT[block_name]
     digest = hashlib.md5(block_name.encode("utf-8")).digest()
     return (digest[0], digest[1], digest[2])
 
