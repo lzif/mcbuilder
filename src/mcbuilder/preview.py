@@ -175,6 +175,20 @@ _DEFAULT_PROPS = {
     "hanging": "false",  # lanterns
     "waterlogged": "false",
     "open": "false",
+    # Sign fix (2026-10-10): vanilla sign template models key variants on
+    # rotation=/attached=, so bare oak_sign / oak_hanging_sign need these
+    # defaults to resolve instead of degrading to the fallback cube.
+    # RE-AUDIT WARNING: _match_variant only requires every key-pair in a
+    # variant key to be satisfied, so defaults additions are NON-monotonic:
+    # tripwire.json (32 variants) and tripwire_hook.json (16) DO key on
+    # attached=, and stay unmatched only because those variant keys also
+    # require props absent from these defaults (east/west/north/south/
+    # powered). Adding a default like east="false" later could silently
+    # start matching those variants. Re-audit this dict on every addition.
+    # The rotation default is safe: no non-sign blockstate in the 26.2
+    # cache keys on rotation= (skulls use the empty-string variant).
+    "rotation": "0",
+    "attached": "false",
 }
 
 
@@ -342,6 +356,53 @@ _FLUID_FLAT = {
     # as flat blue/orange instead of the hash-based fallback color.
     "minecraft:water": (52, 120, 235),
     "minecraft:lava": (255, 110, 20),
+    # Block-entity approximations: the fast tier keeps its flat-cube
+    # contract (no geometry), but gets honest colors. Chest wood matches
+    # the faithful tier's wooden box; banners use the vanilla dye palette
+    # (shared with preview_faithful._DYE_RGB — keep in sync).
+    "minecraft:chest": (181, 140, 82),
+    "minecraft:trapped_chest": (170, 110, 75),
+    "minecraft:ender_chest": (60, 55, 70),
+    "minecraft:copper_chest": (200, 120, 70),
+    "minecraft:exposed_copper_chest": (200, 120, 70),
+    "minecraft:weathered_copper_chest": (200, 120, 70),
+    "minecraft:oxidized_copper_chest": (200, 120, 70),
+    "minecraft:waxed_copper_chest": (200, 120, 70),
+    "minecraft:waxed_exposed_copper_chest": (200, 120, 70),
+    "minecraft:waxed_weathered_copper_chest": (200, 120, 70),
+    "minecraft:waxed_oxidized_copper_chest": (200, 120, 70),
+    "minecraft:white_banner": (249, 255, 254),
+    "minecraft:white_wall_banner": (249, 255, 254),
+    "minecraft:orange_banner": (249, 128, 29),
+    "minecraft:orange_wall_banner": (249, 128, 29),
+    "minecraft:magenta_banner": (199, 78, 189),
+    "minecraft:magenta_wall_banner": (199, 78, 189),
+    "minecraft:light_blue_banner": (58, 179, 218),
+    "minecraft:light_blue_wall_banner": (58, 179, 218),
+    "minecraft:yellow_banner": (254, 216, 61),
+    "minecraft:yellow_wall_banner": (254, 216, 61),
+    "minecraft:lime_banner": (128, 199, 31),
+    "minecraft:lime_wall_banner": (128, 199, 31),
+    "minecraft:pink_banner": (243, 139, 170),
+    "minecraft:pink_wall_banner": (243, 139, 170),
+    "minecraft:gray_banner": (71, 79, 82),
+    "minecraft:gray_wall_banner": (71, 79, 82),
+    "minecraft:light_gray_banner": (157, 157, 151),
+    "minecraft:light_gray_wall_banner": (157, 157, 151),
+    "minecraft:cyan_banner": (22, 156, 156),
+    "minecraft:cyan_wall_banner": (22, 156, 156),
+    "minecraft:purple_banner": (137, 50, 184),
+    "minecraft:purple_wall_banner": (137, 50, 184),
+    "minecraft:blue_banner": (60, 68, 170),
+    "minecraft:blue_wall_banner": (60, 68, 170),
+    "minecraft:brown_banner": (131, 84, 50),
+    "minecraft:brown_wall_banner": (131, 84, 50),
+    "minecraft:green_banner": (94, 124, 22),
+    "minecraft:green_wall_banner": (94, 124, 22),
+    "minecraft:red_banner": (176, 46, 38),
+    "minecraft:red_wall_banner": (176, 46, 38),
+    "minecraft:black_banner": (29, 29, 33),
+    "minecraft:black_wall_banner": (29, 29, 33),
 }
 
 
@@ -556,7 +617,11 @@ def _build_face_textures(block: str, assets_root,
         var = face_vars.get(face)
         img = images.get(var) if var else None
         if img is None:
-            fallback_blocks.add(name)
+            if name not in _FLUID_FLAT:
+                # _FLUID_FLAT entries are intentional approximations
+                # (flat blue water / orange lava, flat chest & banner
+                # colors) — not missing-asset warnings.
+                fallback_blocks.add(name)
             img = Image.new("RGB", (16, 16), _fallback_color(name))
         out[face] = img
     return out

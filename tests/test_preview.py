@@ -238,3 +238,60 @@ def test_non_cube_model_maps_single_texture_var(tmp_path):
     result = render(grid, tmp_path / "previews", parse_views("top"),
                     tmp_path / "assets")
     assert result.info["fallback_blocks"] == []
+
+
+# ---------------------------------------------------------------------------
+# gap4 fast tier: honest flat colors for block entities + fallback_blocks
+# behavior change (water/lava leave fallback_blocks — intentional
+# approximations are not missing-asset warnings)
+# ---------------------------------------------------------------------------
+
+def _resolved_mc_root(tmp_path):
+    from mcbuilder.preview import _resolve_assets_root
+    root = _resolve_assets_root(make_assets(tmp_path))
+    assert root is not None
+    return root
+
+
+def test_fast_chest_flat_color(tmp_path):
+    from mcbuilder.preview import _build_face_textures
+    assets = _resolved_mc_root(tmp_path)
+    fb: set = set()
+    faces = _build_face_textures("minecraft:chest", assets, fb)
+    assert faces["north"].getpixel((0, 0)) == (181, 140, 82)
+    assert "minecraft:chest" not in fb
+
+
+def test_fast_trapped_chest_flat_color(tmp_path):
+    from mcbuilder.preview import _build_face_textures
+    assets = _resolved_mc_root(tmp_path)
+    fb: set = set()
+    faces = _build_face_textures("minecraft:trapped_chest", assets, fb)
+    assert faces["north"].getpixel((0, 0)) == (170, 110, 75)
+    assert "minecraft:trapped_chest" not in fb
+
+
+def test_fast_banner_flat_color(tmp_path):
+    from mcbuilder.preview import _build_face_textures
+    assets = _resolved_mc_root(tmp_path)
+    fb: set = set()
+    faces = _build_face_textures("minecraft:red_banner", assets, fb)
+    assert faces["north"].getpixel((0, 0)) == (176, 46, 38)
+    assert "minecraft:red_banner" not in fb
+    faces = _build_face_textures("minecraft:white_wall_banner[facing=north]",
+                                 assets, fb)
+    assert faces["north"].getpixel((0, 0)) == (249, 255, 254)
+    assert "minecraft:white_wall_banner" not in fb
+
+
+def test_fast_fluid_no_warning(tmp_path):
+    """water/lava are intentional flat approximations — no fallback entry."""
+    from mcbuilder.preview import _build_face_textures
+    assets = make_assets(tmp_path)
+    fb: set = set()
+    faces = _build_face_textures("minecraft:water", assets, fb)
+    assert faces["north"].getpixel((0, 0)) == (52, 120, 235)
+    faces = _build_face_textures("minecraft:lava", assets, fb)
+    assert faces["north"].getpixel((0, 0)) == (255, 110, 20)
+    assert "minecraft:water" not in fb
+    assert "minecraft:lava" not in fb
