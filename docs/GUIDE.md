@@ -226,7 +226,9 @@ transposed.** Never index `array[z, y, x]`; never assume the first axis is
 height. Never-placed cells inside the bbox read as `-1` (`UNSET`);
 explicitly carved `"minecraft:air"` cells read as air's palette index
 (carved air is distinguishable from untouched cells — that's what the
-exporter's `include_air` flag needs).
+exporter's `include_air` flag needs). Explicit air also expands the dense
+bounds: an air cell outside the non-air region grows the `to_dense()` array
+instead of crashing it.
 
 Subtractive primitive: `BUILD.carve(c1, c2)` removes every cell in the
 inclusive box between the two corners (any order — same corner

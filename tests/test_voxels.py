@@ -153,3 +153,45 @@ def test_overwrite_count_tracks_real_block_replacements():
     g.place(2, 0, 0, "minecraft:air", None)
     g.place(2, 0, 0, "minecraft:stone", None)  # air -> real: not counted
     assert g.overwrite_count == 1
+
+
+def test_to_dense_air_outside_non_air_bbox_no_crash():
+    """Explicit air outside the non-air bbox expands the dense array.
+
+    Regression test: this used to raise ``IndexError`` (the array was
+    sized by the non-air ``bounds()`` but written with every cell).
+    Explicit air is real user intent (carving) — it must be kept, not
+    crashed on and not silently dropped.
+    """
+    g = VoxelGrid()
+    g.place(0, 0, 0, "minecraft:stone", None)
+    g.place(5, 0, 0, AIR, None)  # carved air beyond the non-air bbox
+    arr, palette, _ = g.to_dense()  # must not raise
+    assert arr.shape == (6, 1, 1)
+    assert arr[0, 0, 0] == palette.index("minecraft:stone")
+    assert arr[5, 0, 0] == palette.index(AIR)  # kept as air, not UNSET
+    assert arr[3, 0, 0] == UNSET  # never placed
+    # non-air bounds() semantics are unchanged: air still doesn't extend it
+    assert g.bounds() == ((0, 0, 0), (0, 0, 0))
+
+
+def test_to_dense_air_only_grid_keeps_air():
+    """A grid with only explicit air cells is not 'empty' for to_dense."""
+    g = VoxelGrid()
+    g.place(2, 3, 4, AIR, None)
+    arr, palette, _ = g.to_dense()
+    assert arr.shape == (1, 1, 1)
+    assert arr[0, 0, 0] == palette.index(AIR)
+    assert g.bounds() is None  # bounds() still ignores air
+
+
+def test_to_dense_negative_outside_air():
+    """Air on the negative side also expands the dense array correctly."""
+    g = VoxelGrid()
+    g.place(0, 0, 0, "minecraft:stone", None)
+    g.place(-2, -1, 0, AIR, None)
+    arr, palette, _ = g.to_dense()
+    assert arr.shape == (3, 2, 1)
+    # array origin moved to the air cell: (minx, miny) == (-2, -1)
+    assert arr[2, 1, 0] == palette.index("minecraft:stone")
+    assert arr[0, 0, 0] == palette.index(AIR)

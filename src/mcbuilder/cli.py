@@ -298,9 +298,10 @@ def _resolve_views(args, build_obj) -> list:
 def _block_counts(arr: np.ndarray, palette: list[str]) -> dict[str, int]:
     """Survival material/shopping list: post-crop, air excluded.
 
-    The dense array is already cropped to the non-air bbox; never-placed
-    cells inside it read as -1 (UNSET) and are skipped. Counting non-air
-    cells over the array therefore equals the post-crop material list.
+    The dense array is already cropped to the placed-cell bbox (explicit
+    air included); never-placed cells inside it read as -1 (UNSET) and are
+    skipped. Counting non-air cells over the array therefore equals the
+    post-crop material list.
     """
     counts: dict[str, int] = {}
     uniq, nums = np.unique(arr, return_counts=True)

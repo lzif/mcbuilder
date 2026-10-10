@@ -8,8 +8,10 @@ Grid duck-type contract (implemented by mcbuilder.voxels.VoxelGrid):
 
 - ``grid.to_dense()`` -> ``(arr, palette, provenance)`` where ``arr`` is a
   numpy int32 array of shape ``(nx, ny, nz)`` indexed ``[x, y, z]`` holding
-  palette indices, pre-cropped to the non-air bbox (``arr[i, j, k]`` is the
-  cell at ``(minx + i, miny + j, minz + k)``). ``palette`` is a list mapping
+  palette indices, pre-cropped to the placed-cell bbox (explicit
+  ``"minecraft:air"`` expands the bounds like any placed cell — see
+  ``VoxelGrid.to_dense``; ``arr[i, j, k]`` is the cell at
+  ``(minx + i, miny + j, minz + k)``). ``palette`` is a list mapping
   index -> canonical blockstate string; never-placed cells inside the bbox
   read as ``-1`` (UNSET) and are skipped by the renderer, as are cells whose
   palette entry is exactly ``"minecraft:air"`` (carved air). ``provenance``
@@ -412,7 +414,7 @@ def _renderable_mask(arr: np.ndarray, palette: list) -> np.ndarray:
 def _crop_bounds(arr: np.ndarray, palette: list) -> tuple[tuple[int, int], ...] | None:
     """Tight array-relative crop (exclusive hi ends) over renderable cells.
 
-    ``VoxelGrid.to_dense()`` already pre-crops to the non-air bbox, so this
+    ``VoxelGrid.to_dense()`` already pre-crops to the placed-cell bbox, so this
     is normally the full array extent; it is recomputed here (rather than
     trusting ``grid.bounds()``) so duck-typed grids with non-cropped arrays
     also frame correctly. Returns ``None`` when nothing is renderable (the

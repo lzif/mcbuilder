@@ -102,9 +102,15 @@ class VoxelGrid:
         """Materialize the placed region as an int32 array.
 
         Returns ``(array, palette, provenance)`` where ``array`` has shape
-        ``(sx, sy, sz)`` covering the inclusive non-air bbox from
-        :meth:`bounds`, ``palette`` is index-aligned with the array values,
-        and ``provenance`` maps palette index to ``(file, line)``.
+        ``(sx, sy, sz)`` covering the inclusive bbox over *all* placed
+        cells — explicit ``"minecraft:air"`` placements expand the dense
+        bounds just like real blocks (they are real user intent, e.g. from
+        carving), so ``to_dense()`` never crashes on out-of-bbox air and
+        never silently drops it. The padding is plain air; exporters and
+        renderers treat it as such.
+
+        ``palette`` is index-aligned with the array values, and
+        ``provenance`` maps palette index to ``(file, line)``.
 
         Coordinate mapping: ``array[i, j, k]`` is the cell at
         ``(minx + i, miny + j, minz + k)`` where ``(minx, miny, minz)`` is
@@ -112,14 +118,14 @@ class VoxelGrid:
         the bbox read as ``-1`` (:data:`UNSET`); explicitly carved
         ``"minecraft:air"`` cells read as air's palette index.
 
-        An empty grid (no non-air cells) returns a ``(0, 0, 0)`` int32
+        An empty grid (no placed cells at all) returns a ``(0, 0, 0)`` int32
         array.
 
         The palette is compacted to entries actually referenced by the
         array: placements fully overwritten later leave no phantom entries,
         so validation and block counts never see blocks with zero cells.
         """
-        bb = self.bounds()
+        bb = self._placed_bounds()
         if bb is None:
             arr = np.zeros((0, 0, 0), dtype=np.int32)
         else:
@@ -151,12 +157,37 @@ class VoxelGrid:
             }
         return arr, palette, provenance
 
+    def _placed_bounds(self) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
+        """Inclusive bbox over *all* placed cells, air included.
+
+        Used by :meth:`to_dense` so an explicit ``"minecraft:air"`` cell
+        outside the non-air bbox expands the dense array instead of
+        crashing it. ``None`` when nothing was placed at all.
+        """
+        mins: list[int] | None = None
+        maxs: list[int] | None = None
+        for x, y, z in self._cells:
+            if mins is None:
+                mins, maxs = [x, y, z], [x, y, z]
+            else:
+                assert maxs is not None
+                mins[0] = min(mins[0], x)
+                mins[1] = min(mins[1], y)
+                mins[2] = min(mins[2], z)
+                maxs[0] = max(maxs[0], x)
+                maxs[1] = max(maxs[1], y)
+                maxs[2] = max(maxs[2], z)
+        if mins is None or maxs is None:
+            return None
+        return (mins[0], mins[1], mins[2]), (maxs[0], maxs[1], maxs[2])
+
     def bounds(self) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
         """Inclusive ``((minx, miny, minz), (maxx, maxy, maxz))`` bbox.
 
         Computed over non-air cells only (explicit ``"minecraft:air"``
         placements don't extend the bbox). ``None`` when the grid has no
-        non-air cells.
+        non-air cells. Note :meth:`to_dense` deliberately uses a wider
+        bbox (see :meth:`_placed_bounds`) so out-of-bbox air can't crash it.
         """
         mins: list[int] | None = None
         maxs: list[int] | None = None
