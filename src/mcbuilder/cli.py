@@ -427,75 +427,79 @@ def cmd_run(args) -> int:
     preview_paths: list[Path] = []
     trusted_paths: list[Path] = []
     faithful_paths: list[Path] = []
+    want = args.tier  # None = all tiers
     if not errors and args.preview:
-        try:
-            result = preview_mod.render(
-                grid, previews_dir, view_list, ctx["config"].resolve_assets_dir()
-            )
-            preview_paths = list(result)
-        except Exception as e:  # noqa: BLE001 - clean message, no traceback
-            raise CliError(f"preview render failed: {type(e).__name__}: {e}") from None
-        for name in result.info.get("fallback_blocks", []):
-            warnings.append(
-                {
-                    "message": (
-                        f"preview: '{name}' has no texture and rendered as "
-                        "a flat fallback color — its direction in the "
-                        "preview is not trustworthy"
-                    )
-                }
-            )
-        # PLAN §3 direction-trusted tier: orientation-truthful geometry,
-        # no textures needed. One warning per untrusted block type.
-        try:
-            tresult = preview_trusted_mod.render(grid, trusted_dir, view_list, None)
-            trusted_paths = list(tresult)
-        except Exception as e:  # noqa: BLE001 - clean message, no traceback
-            raise CliError(
-                f"trusted preview render failed: {type(e).__name__}: {e}"
-            ) from None
-        for name, n in tresult.info.get("untrusted_blocks", {}).items():
-            warnings.append(
-                {
-                    "message": (
-                        f"trusted preview: {n} `{name}` rendered as labeled "
-                        "cube — orientation not verified"
-                    )
-                }
-            )
-        # PLAN §3 faithful tier (v0.3): real model geometry + real
-        # textures, Shadow Court presentation. One warning per
-        # untrusted block type.
-        try:
-            title = stem.replace("_", " ").title()
-            fresult = preview_faithful_mod.render(
-                grid, faithful_dir, view_list,
-                ctx["config"].resolve_assets_dir(),
-                presentation=True, title=title,
-            )
-            faithful_paths = list(fresult)
-        except Exception as e:  # noqa: BLE001 - clean message, no traceback
-            raise CliError(
-                f"faithful preview render failed: {type(e).__name__}: {e}"
-            ) from None
-        for name, n in fresult.info.get("untrusted_blocks", {}).items():
-            warnings.append(
-                {
-                    "message": (
-                        f"faithful preview: {n} `{name}` rendered as labeled "
-                        "cube — orientation not verified"
-                    )
-                }
-            )
-        if fresult.info.get("assets_missing"):
-            warnings.append(
-                {
-                    "message": (
-                        "faithful preview: vanilla client assets not found — "
-                        "all blocks rendered as fallback cubes"
-                    )
-                }
-            )
+        if want in (None, "fast"):
+            try:
+                result = preview_mod.render(
+                    grid, previews_dir, view_list, ctx["config"].resolve_assets_dir()
+                )
+                preview_paths = list(result)
+            except Exception as e:  # noqa: BLE001 - clean message, no traceback
+                raise CliError(f"preview render failed: {type(e).__name__}: {e}") from None
+            for name in result.info.get("fallback_blocks", []):
+                warnings.append(
+                    {
+                        "message": (
+                            f"preview: '{name}' could not be textured and rendered "
+                            "as a flat fallback color — its direction in the "
+                            "preview is not trustworthy"
+                        )
+                    }
+                )
+        if want in (None, "trusted"):
+            # PLAN §3 direction-trusted tier: orientation-truthful geometry,
+            # no textures needed. One warning per untrusted block type.
+            try:
+                tresult = preview_trusted_mod.render(grid, trusted_dir, view_list, None)
+                trusted_paths = list(tresult)
+            except Exception as e:  # noqa: BLE001 - clean message, no traceback
+                raise CliError(
+                    f"trusted preview render failed: {type(e).__name__}: {e}"
+                ) from None
+            for name, n in tresult.info.get("untrusted_blocks", {}).items():
+                warnings.append(
+                    {
+                        "message": (
+                            f"trusted preview: {n} `{name}` rendered as magenta "
+                            "fallback cube — orientation not verified"
+                        )
+                    }
+                )
+        if want in (None, "faithful"):
+            # PLAN §3 faithful tier (v0.3): real model geometry + real
+            # textures, Shadow Court presentation. One warning per
+            # untrusted block type.
+            try:
+                title = stem.replace("_", " ").title()
+                fresult = preview_faithful_mod.render(
+                    grid, faithful_dir, view_list,
+                    ctx["config"].resolve_assets_dir(),
+                    presentation=True, title=title,
+                )
+                faithful_paths = list(fresult)
+            except Exception as e:  # noqa: BLE001 - clean message, no traceback
+                raise CliError(
+                    f"faithful preview render failed: {type(e).__name__}: {e}"
+                ) from None
+            for name, n in fresult.info.get("untrusted_blocks", {}).items():
+                warnings.append(
+                    {
+                        "message": (
+                            f"faithful preview: {n} `{name}` rendered as magenta "
+                            "fallback cube — orientation not verified"
+                        )
+                    }
+                )
+            if fresult.info.get("assets_missing"):
+                warnings.append(
+                    {
+                        "message": (
+                            "faithful preview: vanilla client assets not found — "
+                            "all blocks rendered as fallback cubes"
+                        )
+                    }
+                )
 
     if not errors:
         artifact_path, data_version, export_warnings = _export_artifact(
@@ -768,7 +772,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="render preview PNGs into <run>/previews/ (fast tier), "
         "<run>/previews_trusted/ (PLAN §3 direction-trusted tier) and "
-        "<run>/previews_faithful/ (PLAN §3 v0.3 faithful tier)",
+        "<run>/previews_faithful/ (PLAN §3 v0.3 faithful tier); "
+        "use --tier to render only one",
+    )
+    r.add_argument(
+        "--tier",
+        choices=("fast", "trusted", "faithful"),
+        default=None,
+        help="with --preview, render only this tier (default: all three)",
     )
     r.add_argument(
         "--views",

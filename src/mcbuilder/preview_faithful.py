@@ -74,6 +74,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -232,7 +233,11 @@ def _load_texture_image(root: Path, rel: str, cache: dict):
         return cache[rel]
     try:
         with Image.open(root / "textures" / f"{rel}.png") as im:
-            img = im.convert("RGBA")
+            # Silence PIL's palette-transparency UserWarning: we convert
+            # to RGBA immediately, so the warning carries no information.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                img = im.convert("RGBA")
             # Keep RGBA only when the texture actually uses transparency
             # (glass, leaves, stained glass...); opaque textures stay RGB.
             if img.getchannel("A").getextrema() == (255, 255):
@@ -1421,6 +1426,9 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
                 (W // ss, H // ss), Image.LANCZOS)
         if title:
             _draw_title(canvas, title)
+        # View label + compass even in presentation mode: a PNG viewed
+        # alone (e.g. on a phone) must say which view it is.
+        _fast._overlay_label_and_compass(canvas, view, r, u)
     else:
         _fast._overlay_label_and_compass(canvas, view, r, u)
         _draw_debug_badge(canvas)

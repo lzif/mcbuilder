@@ -360,6 +360,27 @@ def test_render_enforces_36_view_cap(tmp_path):
         b.render(tmp_path, views=views)
 
 
+def test_render_discovers_assets_when_dir_not_given(tmp_path):
+    """assets_dir=None must do CLI-like cache discovery, not silently
+    render every block magenta (the agent footgun)."""
+    from pathlib import Path
+    cache = Path.home() / ".cache" / "mcbuilder" / "26.2"
+    if not (cache / "client" / "assets" / "minecraft").is_dir():
+        pytest.skip("no local 26.2 asset cache")
+    from PIL import Image
+    b = Build(seed=1)
+    with b:
+        b.set(0, 0, 0, "minecraft:grass_block")
+    paths = b.render(tmp_path, views=["top"], tier="faithful")
+    assert len(paths) == 1
+    img = Image.open(paths[0]).convert("RGB")
+    # Grass green present, magenta fallback absent.
+    px = list(img.getdata())
+    assert any(g > 100 > r for r, g, _b in px), "no green texels rendered"
+    assert not any(r > 180 and g < 100 and b > 180 for r, g, b in px), \
+        "magenta fallback rendered despite cached assets"
+
+
 def test_build_validate_uses_registry():
     """Build.validate() runs registry validation over the palette (finding #4)."""
     from mcbuilder.registry import Registry

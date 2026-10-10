@@ -589,6 +589,11 @@ class Build:
                 f"render: tier must be 'fast', 'trusted' or 'faithful', "
                 f"got {tier!r}"
             )
+        if assets_dir is None:
+            # Same discovery as the CLI: fall back to the versioned asset
+            # cache instead of silently rendering everything magenta.
+            from mcbuilder.config import McbuildConfig
+            assets_dir = McbuildConfig().resolve_assets_dir()
         view_list = self._resolve_render_views(views, views_mod)
         if tier == "faithful":
             return list(faithful_mod.render(

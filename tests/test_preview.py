@@ -216,6 +216,40 @@ def test_bare_blockstate_without_default_variant_resolves(tmp_path):
     assert result.info["fallback_blocks"] == []
 
 
+def test_bare_snowy_blockstate_resolves_to_snowy_false(tmp_path):
+    # grass_block / mycelium / podzol key their variants on snowy=
+    # (the only three blockstates in 26.2 that do). A bare palette entry
+    # must resolve via the snowy=false default, not magenta-cube.
+    from mcbuilder import preview as _fast
+    assert _fast._DEFAULT_PROPS["snowy"] == "false"
+    mc = tmp_path / "assets" / "x" / "client" / "assets" / "minecraft"
+    (mc / "blockstates").mkdir(parents=True)
+    (mc / "models" / "block").mkdir(parents=True)
+    (mc / "textures" / "block").mkdir(parents=True)
+    _write_json(mc / "blockstates" / "test_grass.json",
+                {"variants": {
+                    "snowy=false": {"model": "minecraft:block/test_grass"},
+                    "snowy=true": {"model": "minecraft:block/test_grass_snow"}}})
+    _write_json(mc / "models" / "block" / "test_grass.json",
+                {"parent": "minecraft:block/cube_all",
+                 "textures": {"all": "minecraft:block/test_grass_tex"}})
+    _write_json(mc / "models" / "block" / "test_grass_snow.json",
+                {"parent": "minecraft:block/cube_all",
+                 "textures": {"all": "minecraft:block/test_grass_snow_tex"}})
+    _write_tex(mc, "test_grass_tex.png", (100, 150, 60))
+    _write_tex(mc, "test_grass_snow_tex.png", (230, 240, 245))
+
+    arr = np.zeros((2, 2, 2), dtype=np.int32)
+    arr[0, 0, 0] = 1
+    grid = FakeGrid(arr, ["minecraft:air", "minecraft:test_grass"])  # no props
+    result = render(grid, tmp_path / "previews", parse_views("top"),
+                    tmp_path / "assets")
+    assert result.info["fallback_blocks"] == []
+    # The snowy=false (green) texture won, not the snowy=true (snow) one.
+    img = Image.open(tmp_path / "previews" / "top.png")
+    assert img.getpixel((img.size[0] // 2, img.size[1] // 2))[:3] != (230, 240, 245)
+
+
 def test_non_cube_model_maps_single_texture_var(tmp_path):
     # Fence/torch-style models are not cube templates and expose a single
     # texture var (``texture``/``torch``). The fast tier must map faces to

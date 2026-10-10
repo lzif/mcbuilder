@@ -336,6 +336,24 @@ def test_run_views_flag_overrides_script_config(tmp_path):
     assert [p.name for p in previews] == ["iso.png"]
 
 
+def test_run_tier_flag_renders_only_that_tier(tmp_path):
+    script = _write(tmp_path, "hut.py", VALID_SCRIPT)
+    _with_config(tmp_path)
+    out_dir = tmp_path / "dist"
+    assert (
+        main(["run", str(script), "--out", str(out_dir), "--preview",
+              "--tier", "faithful", "--views", "iso"])
+        == 0
+    )
+    run = out_dir / "run-001"
+    assert [p.name for p in sorted((run / "previews_faithful").glob("*.png"))] == ["iso.png"]
+    assert list((run / "previews").glob("*.png")) == []
+    assert list((run / "previews_trusted").glob("*.png")) == []
+    report = json.loads((run / "report.json").read_text(encoding="utf-8"))
+    assert len(report["views"]) == 1
+    assert report["views"][0]["file"] == "previews_faithful/iso.png"
+
+
 def test_run_count_appends_orbit(tmp_path):
     script = _write(tmp_path, "hut.py", VALID_SCRIPT)
     _with_config(tmp_path)

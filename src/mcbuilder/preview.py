@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -189,6 +190,11 @@ _DEFAULT_PROPS = {
     # cache keys on rotation= (skulls use the empty-string variant).
     "rotation": "0",
     "attached": "false",
+    # Grass-block fix: grass_block / mycelium / podzol key their variants
+    # on snowy= (the ONLY three blockstates in 26.2 that do — verified by
+    # grepping the blockstate cache). Bare "minecraft:grass_block" must
+    # resolve to the snowy=false variant instead of the magenta cube.
+    "snowy": "false",
 }
 
 
@@ -319,7 +325,11 @@ def _do_resolve(block_name: str, props: dict, root: Path):
         tex_path = root / "textures" / f"{rel}.png"
         try:
             with Image.open(tex_path) as im:
-                images[var] = im.convert("RGB")
+                # Silence PIL's palette-transparency UserWarning (see the
+                # faithful tier): the convert makes it moot.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    images[var] = im.convert("RGB")
         except Exception:
             images[var] = None
 

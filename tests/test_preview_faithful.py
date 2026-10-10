@@ -706,6 +706,18 @@ def test_chest_missing_entity_texture_assets_root_none(tex_cache):
 
 
 @needs_real_assets
+def test_grass_block_not_fallback(tex_cache):
+    """grass_block / mycelium / podzol key variants on snowy= — the
+    snowy=false default must resolve them (no magenta lawn)."""
+    for name in ("minecraft:grass_block", "minecraft:mycelium",
+                 "minecraft:podzol"):
+        quads, fb = pf.resolve_block_quads(name, _REAL_ROOT, tex_cache,
+                                           set())
+        assert not fb, name
+        assert len(quads) >= 6, (name, len(quads))
+
+
+@needs_real_assets
 def test_banner_not_fallback():
     tex_cache: dict = {}
     quads, fb = pf.resolve_block_quads("minecraft:red_banner", _REAL_ROOT,
