@@ -29,7 +29,10 @@ Python 3.10+.
 
 ```bash
 mcbuild assets fetch --version 26.2   # one-time: registry + vanilla textures
+mcbuild init                          # write a runnable starter build (house.py)
 ```
+
+Or write your own:
 
 ```python
 # hut.py

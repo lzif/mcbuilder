@@ -1,6 +1,7 @@
 """Command-line interface for mcbuilder.
 
 Subcommands:
+  init    write a starter build script (the five-minute house) that runs as-is
   check   validate a builder script (fast loop: no rendering, no artifact)
   run     validate + export + render previews into an auto-versioned run dir
   diff    compare two runs' voxel data (added/removed/replaced cells)
@@ -644,6 +645,63 @@ def cmd_assets_fetch(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# init — starter scaffold
+# ---------------------------------------------------------------------------
+
+# NOTE: this template mirrors docs/GUIDE.md §2 ("Five-minute house"). If the
+# recipe changes there, update this string to match (and vice versa).
+HOUSE_TEMPLATE = '''\
+# house.py — starter mcbuilder build (written by `mcbuild init`).
+#
+# The loop:  mcbuild check house.py  ->  mcbuild run house.py --preview
+# Look at the pictures, tweak the numbers, re-run. No factories, no shared
+# modules — one asymmetric, one-off build.
+import mcbuilder as mb
+
+BUILD = mb.Build(seed=1)
+
+with BUILD:
+    # floor + walls: 7 x 5 footprint, walls 3 high
+    BUILD.floor((0, 0, 0), (6, 0, 4), "minecraft:cobblestone")
+    BUILD.walls((0, 1, 0), (6, 3, 4), "minecraft:oak_planks")
+
+    # doorway (north wall) + window (south wall): carve with air, hang the door
+    BUILD.box((3, 1, 0), (3, 2, 0), "minecraft:air")
+    BUILD.box((1, 2, 4), (2, 2, 4), "minecraft:air")
+    BUILD.set(3, 1, 0, "minecraft:oak_door[facing=north,half=lower,hinge=left]")
+    BUILD.set(3, 2, 0, "minecraft:oak_door[facing=north,half=upper,hinge=left]")
+
+    # gable roof: ridge along x, 1-block overhang, eaves at y=4.
+    # Span is 7 deep (z -1..5), so it rises ceil(7/2) = 4 above the eaves.
+    roof = BUILD.roof_gable(
+        (-1, 4, -1), (7, 4, 5), "minecraft:spruce_stairs", ridge="x"
+    )
+
+    # chimney sized from the roof's ACTUAL peak — no guessing, no source-diving:
+    (_, _, _), (_, peak, _) = roof.bounds()
+    BUILD.box((5, peak - 1, 1), (5, peak + 2, 1), "minecraft:cobblestone")
+'''
+
+
+def cmd_init(args) -> int:
+    """Write the starter scaffold; refuse to clobber without --force."""
+    target = Path(args.path)
+    if target.is_dir():
+        raise CliError(f"not a file: {target}")
+    if target.exists() and not args.force:
+        raise CliError(
+            f"refusing to overwrite existing file: {target} "
+            "(pass --force to overwrite)"
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(HOUSE_TEMPLATE, encoding="utf-8")
+    print(f"wrote {target}")
+    print(f"next: mcbuild check {target}")
+    print(f"then: mcbuild run {target} --preview")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # argparse + entry point
 # ---------------------------------------------------------------------------
 
@@ -656,6 +714,28 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub = p.add_subparsers(dest="command", required=True, metavar="<command>")
+
+    i = sub.add_parser(
+        "init",
+        help="write a starter build script (the five-minute house)",
+        description=(
+            "Write a starter builder script (the GUIDE's five-minute house) "
+            "that passes `mcbuild check` as-is. Refuses to overwrite an "
+            "existing file unless --force is given."
+        ),
+    )
+    i.add_argument(
+        "path",
+        nargs="?",
+        default="house.py",
+        help="where to write the scaffold (default: house.py in the cwd)",
+    )
+    i.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite the file if it already exists",
+    )
+    i.set_defaults(func=cmd_init)
 
     c = sub.add_parser(
         "check",

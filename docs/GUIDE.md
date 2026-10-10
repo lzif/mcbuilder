@@ -446,6 +446,12 @@ sign off on **faithful**.
 ## 8. CLI reference
 
 ```bash
+mcbuild init [path] [--force]
+# write a starter builder script (the §2 five-minute house) that passes
+# `check` as-is. Default path: house.py in the cwd. Refuses to overwrite
+# an existing file unless --force is given.
+# Then: mcbuild check <path>  ->  mcbuild run <path> --preview
+
 mcbuild check <script> [--config PATH]
 # validate only. Prints "OK (N blocks, M types, E errors, W warnings)".
 # Exit 1 on errors, 0 otherwise. No rendering, no artifact.

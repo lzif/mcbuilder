@@ -508,3 +508,91 @@ def test_run_reports_overwritten_placements(tmp_path, capsys):
     assert report["overwritten_placements"] == 1
     out, _ = capsys.readouterr()
     assert "1 placements overwritten" in out
+
+
+# ---------------------------------------------------------------------------
+# init
+# ---------------------------------------------------------------------------
+
+HOUSE_BLOCKS = {
+    "minecraft:cobblestone": {"properties": {}},
+    "minecraft:oak_planks": {"properties": {}},
+    "minecraft:air": {"properties": {}},
+    "minecraft:oak_door": {
+        "properties": {
+            "facing": ["north", "south", "east", "west"],
+            "half": ["lower", "upper"],
+            "hinge": ["left", "right"],
+            "open": ["true", "false"],
+            "powered": ["true", "false"],
+        }
+    },
+    "minecraft:spruce_stairs": {
+        "properties": {
+            "facing": ["north", "south", "east", "west"],
+            "half": ["top", "bottom"],
+            "shape": [
+                "straight",
+                "inner_left",
+                "inner_right",
+                "outer_left",
+                "outer_right",
+            ],
+            "waterlogged": ["true", "false"],
+        }
+    },
+}
+
+
+def _house_registry(monkeypatch):
+    reg = Registry(HOUSE_BLOCKS, "test")
+    monkeypatch.setattr(
+        Registry, "load", classmethod(lambda cls, version, cache_dir: reg)
+    )
+
+
+def test_init_writes_default_house_py(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["init"]) == 0
+    out, _ = capsys.readouterr()
+    p = tmp_path / "house.py"
+    assert p.is_file()
+    assert "BUILD = mb.Build" in p.read_text(encoding="utf-8")
+    assert "mcbuild check house.py" in out
+
+
+def test_init_custom_path_creates_parents(tmp_path):
+    target = tmp_path / "sub" / "dir" / "cabin.py"
+    assert main(["init", str(target)]) == 0
+    assert target.is_file()
+
+
+def test_init_refuses_overwrite_without_force(tmp_path, capsys):
+    target = _write(tmp_path, "house.py", "# mine\n")
+    assert main(["init", str(target)]) == 1
+    _, err = capsys.readouterr()
+    assert "refusing to overwrite" in err
+    assert "--force" in err
+    assert target.read_text(encoding="utf-8") == "# mine\n"
+
+
+def test_init_force_overwrites(tmp_path):
+    target = _write(tmp_path, "house.py", "# mine\n")
+    assert main(["init", str(target), "--force"]) == 0
+    assert "BUILD = mb.Build" in target.read_text(encoding="utf-8")
+
+
+def test_init_rejects_directory_target(tmp_path, capsys):
+    assert main(["init", str(tmp_path)]) == 1
+    _, err = capsys.readouterr()
+    assert "not a file" in err
+
+
+def test_init_generated_script_passes_check(tmp_path, monkeypatch, capsys):
+    _house_registry(monkeypatch)
+    script = tmp_path / "house.py"
+    assert main(["init", str(script)]) == 0
+    _with_config(tmp_path)
+    assert main(["check", str(script)]) == 0
+    out, _ = capsys.readouterr()
+    assert "0 errors" in out
