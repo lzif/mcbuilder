@@ -319,6 +319,197 @@ def _resolve_model_elements_and_textures(model_ref: str, root: Path,
 
 
 # ---------------------------------------------------------------------------
+# wall rendering: render-time connection inference
+# ---------------------------------------------------------------------------
+#
+# Wall blocks (``minecraft:*_wall``) ship multipart blockstates whose arms
+# select on ``east/north/south/west`` ∈ {low, tall, false} plus ``up``.
+# Structure NBTs normally carry NO wall properties (in-game the game
+# computes them via block updates), so the multipart matcher finds zero
+# cases and the block degrades to the magenta fallback cube.
+#
+# Fix: infer the connection properties at render time from the voxel grid
+# (read-only — the NBT is untouched). Rules verified against
+# minecraft.wiki/w/Wall (Java Edition):
+# - connect(dir): the neighbor is a wall (any material), iron bars, a
+#   glass pane, a fence gate (v0: gate facing ignored), or presents a
+#   full solid face — v0 uses the existing cell-level occlusion
+#   classification as a documented approximation (stairs' solid backsides
+#   won't connect; walls do NOT connect to fences).
+# - arm height: TALL iff the block directly above the wall is solid
+#   (v0 proxy for "covers the center-to-side strip on the wall top"),
+#   else LOW. Depends only on the static grid + pass-1 connects, so two
+#   passes are deterministic with no fixpoint (dependency class (a)).
+# - up: "true" if any non-air block is directly above the wall (covers
+#   the center post), else "false" only when connecting to exactly two
+#   opposite sides or all four sides, "true" otherwise. (Vanilla's finer
+#   "covered by a small block" list and wallstone post-propagation are
+#   out of scope for v0.)
+# - waterlogged: always "false" for rendering.
+# - Named v0 divergence: leaves count as solid via the AO occlusion
+#   exception, so walls over-connect to leaves vs vanilla (which needs a
+#   sturdy face). Tests assert the v0 behavior as documented.
+
+_WALL_DIRS = ("north", "south", "east", "west")
+
+#: Memo for _is_wall_block: (block name, assets_root) -> bool.
+_wall_block_memo: dict[tuple[str, str], bool] = {}
+
+
+def _is_wall_block(name: str, assets_root) -> bool:
+    """True iff `name` is a real wall block (data-driven value-domain gate).
+
+    Collects the ``east/north/south/west`` ``when``-values (recursing
+    through OR/AND like :func:`_when_matches`) from the block's blockstate
+    JSON and requires the set ⊆ {low, tall, false} with at least one of
+    low/tall present. Key-name gating would misfire on ``vine``,
+    ``tripwire``, ``oak_fence`` and ``glass_pane`` (boolean true/false
+    domain); verified exact for vanilla 26.2: 32 blocks pass, all
+    ``*_wall``, zero false positives.
+    """
+    key = (name, str(assets_root))
+    hit = _wall_block_memo.get(key)
+    if hit is not None:
+        return hit
+    result = False
+    if assets_root is not None:
+        short = name.split(":", 1)[-1]
+        bs = _read_json(Path(assets_root) / "blockstates" / f"{short}.json")
+        if isinstance(bs, dict):
+            vals: set[str] = set()
+
+            def _collect(when) -> None:
+                if not isinstance(when, dict):
+                    return
+                if "OR" in when:
+                    for c in when["OR"]:
+                        _collect(c)
+                    return
+                if "AND" in when:
+                    for c in when["AND"]:
+                        _collect(c)
+                    return
+                for k, v in when.items():
+                    if k in _WALL_DIRS:
+                        if isinstance(v, list):
+                            vals.update(str(x) for x in v)
+                        else:
+                            vals.add(str(v))
+
+            mp = bs.get("multipart")
+            if isinstance(mp, list):
+                for case in mp:
+                    _collect(case.get("when"))
+            result = (bool(vals) and vals <= {"low", "tall", "false"}
+                      and bool(vals & {"low", "tall"}))
+    _wall_block_memo[key] = result
+    return result
+
+
+def _wall_connects_to(arr, palette, nx: int, ny: int, nz: int,
+                      assets_root, tex_cache, occ_memo: dict) -> bool:
+    """v0 connect predicate for one horizontal neighbor cell of a wall."""
+    if not (0 <= nx < arr.shape[0] and 0 <= ny < arr.shape[1]
+            and 0 <= nz < arr.shape[2]):
+        return False
+    nidx = int(arr[nx, ny, nz])
+    if nidx < 0 or nidx >= len(palette):
+        return False
+    nblock = palette[nidx]
+    if nblock == "minecraft:air":
+        return False
+    nname, _ = _fast._split_blockstate(nblock)
+    if _is_wall_block(nname, assets_root):
+        return True
+    if nname == "minecraft:iron_bars" or nname.endswith("glass_pane"):
+        return True
+    if nname.endswith("fence_gate"):
+        return True  # v0: gate facing ignored (documented approximation)
+    hit = occ_memo.get(nidx)
+    if hit is None:
+        hit = _block_occludes_ao(nblock, assets_root, tex_cache)
+        occ_memo[nidx] = hit
+    return hit
+
+
+def _build_wall_connect(arr, palette, assets_root, tex_cache):
+    """Pass 1: per wall cell ``{dir: bool, 'above_solid': bool,
+    'above_any': bool}``.
+
+    Built once per :func:`render` from the static grid; pass 2
+    (:func:`_infer_wall_props`) only reads it, so tall/low/up evaluation
+    is deterministic with no fixpoint.
+    """
+    wall_connect: dict[tuple[int, int, int], dict[str, bool]] = {}
+    occ_memo: dict[int, bool] = {}
+    for idx, block in enumerate(palette):
+        name, _ = _fast._split_blockstate(block)
+        if not _is_wall_block(name, assets_root):
+            continue
+        for cell in np.argwhere(arr == idx):
+            x, y, z = (int(v) for v in cell)
+            entry: dict[str, bool] = {}
+            for d in _WALL_DIRS:
+                dx, dy, dz = _FACE_NORMALS[d]
+                entry[d] = _wall_connects_to(
+                    arr, palette, x + dx, y + dy, z + dz,
+                    assets_root, tex_cache, occ_memo)
+            above_any = False
+            above_solid = False
+            if 0 <= y + 1 < arr.shape[1]:
+                aidx = int(arr[x, y + 1, z])
+                if 0 <= aidx < len(palette):
+                    ablock = palette[aidx]
+                    if ablock != "minecraft:air":
+                        above_any = True
+                        hit = occ_memo.get(aidx)
+                        if hit is None:
+                            hit = _block_occludes_ao(
+                                ablock, assets_root, tex_cache)
+                            occ_memo[aidx] = hit
+                        above_solid = hit
+            entry["above_solid"] = above_solid
+            entry["above_any"] = above_any
+            wall_connect[(x, y, z)] = entry
+    return wall_connect
+
+
+def _infer_wall_props(block: str, x: int, y: int, z: int, arr, palette,
+                      wall_connect) -> dict[str, str]:
+    """Pass 2: infer missing wall props for one wall cell.
+
+    Only fills keys absent from the canonical string, so precedence is
+    explicit > inferred > ``_DEFAULT_PROPS`` (partial explicit works).
+    ``arr``/``palette`` are unused — every grid read happens in pass 1
+    (:func:`_build_wall_connect`); they stay in the signature to match
+    the injection site.
+    """
+    _, explicit = _fast._split_blockstate(block)
+    entry = wall_connect.get((x, y, z)) or {}
+    inferred: dict[str, str] = {}
+    for d in _WALL_DIRS:
+        if d in explicit:
+            continue
+        if not entry.get(d, False):
+            inferred[d] = "false"
+        else:
+            inferred[d] = "tall" if entry.get("above_solid", False) else "low"
+    if "up" not in explicit:
+        if entry.get("above_any", False):
+            inferred["up"] = "true"
+        else:
+            sides = {d for d in _WALL_DIRS if entry.get(d, False)}
+            if sides in ({"north", "south"}, {"east", "west"},
+                         {"north", "south", "east", "west"}):
+                inferred["up"] = "false"
+            else:
+                inferred["up"] = "true"
+    if "waterlogged" not in explicit:
+        inferred["waterlogged"] = "false"
+    return inferred
+
+
+# ---------------------------------------------------------------------------
 # smooth lighting: occlusion classification + per-vertex AO sampling
 # ---------------------------------------------------------------------------
 
@@ -374,6 +565,12 @@ def _block_occludes_ao(canonical: str, assets_root, tex_cache) -> bool:
         # texture is transparent (explicit exception to the texture
         # heuristic below).
         return True
+    if _is_wall_block(name, assets_root):
+        # Walls never fill their cell however they connect (post + arms),
+        # so they must not occlude neighbors for AO. Placed before the
+        # `if not apps` fallback below — after it, this would be dead code
+        # for propless walls (the common case).
+        return False
     apps = _model_applications(name, props, assets_root)
     if not apps:
         return True  # fallback magenta cube
@@ -1313,7 +1510,7 @@ def _draw_debug_badge(img: Image.Image) -> None:
 
 def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
                  assets_root, fallback_blocks, presentation, title,
-                 occ_padded):
+                 occ_padded, wall_connect, wall_quad_cache):
     d, r, u = _fast._camera(view)
     (x0, x1), (y0, y1), (z0, z1) = crop
     ss = SUPERSAMPLE if presentation else 1
@@ -1374,13 +1571,37 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
         block = palette[idx]
         if block == "minecraft:air":
             continue
-        cached = quad_cache.get(idx)
-        if cached is None:
-            cached = resolve_block_quads(block, assets_root, tex_cache,
-                                         fallback_blocks)
-            quad_cache[idx] = cached
-        (block_quads, _is_fallback) = cached
         x, y, z = lx + x0, ly + y0, lz + z0
+        name = _fast._split_blockstate(block)[0]
+        if _is_wall_block(name, assets_root):
+            # Position-dependent: infer connections per cell. The shared
+            # quad_cache is keyed by palette index and would bake the
+            # first wall's arms into every wall, so walls bypass it;
+            # wall_quad_cache is keyed by effective props instead (quads
+            # are block-local, so same props -> same quads anywhere).
+            inferred = _infer_wall_props(
+                block, x, y, z, arr, palette, wall_connect)
+            if inferred:
+                _, explicit = _fast._split_blockstate(block)
+                merged = dict(inferred)
+                merged.update(explicit)  # explicit > inferred
+                eff = (name + "[" + ",".join(
+                    f"{k}={v}" for k, v in sorted(merged.items())) + "]")
+            else:
+                eff = block
+            wq = wall_quad_cache.get(eff)
+            if wq is None:
+                wq = resolve_block_quads(eff, assets_root, tex_cache,
+                                         fallback_blocks)
+                wall_quad_cache[eff] = wq
+            (block_quads, _is_fallback) = wq
+        else:
+            cached = quad_cache.get(idx)
+            if cached is None:
+                cached = resolve_block_quads(block, assets_root, tex_cache,
+                                             fallback_blocks)
+                quad_cache[idx] = cached
+            (block_quads, _is_fallback) = cached
         for pts, normal, tex in block_quads:
             if sum(n * dd for n, dd in zip(normal, d)) >= -1e-9:
                 continue  # back-face culling
@@ -1463,9 +1684,14 @@ def render(grid, out_dir, views: list[View], assets_dir,
 
     quad_cache: dict = {}
     tex_cache: dict = {}
+    wall_quad_cache: dict = {}
     untrusted: dict[str, int] = {}
     fallback_blocks: set[str] = set()
     paths: list[Path] = []
+
+    # Wall connection inference (pass 1): once per render, from the static
+    # grid. Pass 2 (_infer_wall_props) runs per wall cell in _render_view.
+    wall_connect = _build_wall_connect(arr, palette, assets_root, tex_cache)
 
     # Pre-scan palette for per-type warnings (once per build, not per view).
     # Uses the full resolve path so a missing MODEL json (blockstate ok,
@@ -1473,6 +1699,11 @@ def render(grid, out_dir, views: list[View], assets_dir,
     if crop is not None and assets_root is not None:
         for idx, block in enumerate(palette):
             if block in ("minecraft:air",):
+                continue
+            if _is_wall_block(_fast._split_blockstate(block)[0],
+                              assets_root):
+                # Walls resolve per-cell with inferred connections; the
+                # position-blind pre-scan would falsely flag them.
                 continue
             _quads, is_fallback = resolve_block_quads(
                 block, assets_root, tex_cache, set())
@@ -1509,7 +1740,8 @@ def render(grid, out_dir, views: list[View], assets_dir,
         else:
             img = _render_view(arr, palette, crop, view, quad_cache,
                                tex_cache, assets_root, fallback_blocks,
-                               presentation, title, occ_padded)
+                               presentation, title, occ_padded,
+                               wall_connect, wall_quad_cache)
         path = out / f"{view.label}.png"
         img.save(path)
         paths.append(path)

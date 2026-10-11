@@ -119,6 +119,66 @@ def make_assets(root: Path) -> Path:
              "apply": {"model": "minecraft:block/test_post"}},
         ]
     })
+    # -- wall-like multipart (wall rendering gap): value-domain gate ------
+    # Mirrors the vanilla wall convention: directional arms select on
+    # low/tall, center post on up=true. The gate in
+    # preview_faithful._is_wall_block requires the n/s/e/w when-values
+    # ⊆ {low, tall, false} with low/tall present.
+    _write_tex(tex_dir / "test_wall.png", (110, 110, 110))
+    _write_json(models_dir / "test_wall_post.json", {
+        "textures": {"all": "minecraft:block/test_wall"},
+        "elements": [
+            {"from": [6, 0, 6], "to": [10, 16, 10],
+             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                       for f in ("up", "down", "north", "south",
+                                 "west", "east")}},
+        ],
+    })
+    _write_json(models_dir / "test_wall_side.json", {
+        "textures": {"all": "minecraft:block/test_wall"},
+        "elements": [
+            {"from": [6, 6, 0], "to": [10, 12, 6],
+             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                       for f in ("up", "down", "north", "south",
+                                 "west", "east")}},
+        ],
+    })
+    _write_json(models_dir / "test_wall_side_tall.json", {
+        "textures": {"all": "minecraft:block/test_wall"},
+        "elements": [
+            {"from": [6, 0, 0], "to": [10, 16, 6],
+             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                       for f in ("up", "down", "north", "south",
+                                 "west", "east")}},
+        ],
+    })
+    _write_json(bs_dir / "test_wall.json", {
+        "multipart": [
+            {"when": {"up": "true"},
+             "apply": {"model": "test:block/test_wall_post"}},
+            {"when": {"north": "low"},
+             "apply": {"model": "test:block/test_wall_side"}},
+            {"when": {"east": "low"},
+             "apply": {"model": "test:block/test_wall_side", "y": 90}},
+            {"when": {"south": "low"},
+             "apply": {"model": "test:block/test_wall_side", "y": 180}},
+            {"when": {"west": "low"},
+             "apply": {"model": "test:block/test_wall_side", "y": 270}},
+            {"when": {"north": "tall"},
+             "apply": {"model": "test:block/test_wall_side_tall"}},
+            {"when": {"east": "tall"},
+             "apply": {"model": "test:block/test_wall_side_tall",
+                       "y": 90}},
+            {"when": {"south": "tall"},
+             "apply": {"model": "test:block/test_wall_side_tall",
+                       "y": 180}},
+            {"when": {"west": "tall"},
+             "apply": {"model": "test:block/test_wall_side_tall",
+                       "y": 270}},
+        ]
+    })
+    # (leaves analog for the wall-connect v0 divergence test is added
+    # after _cube_model is defined, below.)
     # -- biome-tint fakes (gap1): solid-color textures, hermetic ----------
     def _full_cube_faces(tex, tintindex=None):
         faces = {}
@@ -145,6 +205,9 @@ def make_assets(root: Path) -> Path:
 
     # leaves analog: tintindex 0, table entry injected per-test.
     _cube_model("test_tint_cube", "tint_gray", (200, 200, 200), 0)
+    # wall-connect v0 divergence probe: full cube whose name hits the AO
+    # leaves exception (test:test_leaves).
+    _cube_model("test_leaves", "tint_leaves", (130, 160, 110), None)
     # same texture file, different block (per-block table lookup pin).
     _write_json(bs_dir / "test_tint_cube_b.json", {
         "variants": {"": {"model": "test:block/test_tint_cube"}},

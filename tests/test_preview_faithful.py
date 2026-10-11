@@ -1146,3 +1146,144 @@ def _timed_render(grid, out_dir, views):
     pf.render(grid, str(out_dir), views, _REAL_ROOT,
               presentation=False, title=None)
     return time.perf_counter() - t0
+
+
+# ---------------------------------------------------------------------------
+# wall rendering: render-time connection inference
+# ---------------------------------------------------------------------------
+#
+# Wall blocks (test:test_wall) ship multipart blockstates whose arms select
+# on east/north/south/west ∈ {low, tall} plus up. Structure NBTs carry no
+# wall props, so preview_faithful infers them from the voxel grid at render
+# time (read-only): pass 1 _build_wall_connect, pass 2 _infer_wall_props.
+
+_WALL_PALETTE = ["minecraft:air", "test:test_wall", "test:test_tint_plain",
+                 "test:test_leaves"]
+
+
+def _wall_row_grid():
+    """Wall row x=1..3 (y=0,z=1); solid cube east of the row end;
+    isolated wall at (1,0,3); wall at (3,0,3) with leaves to its north."""
+    arr = np.zeros((5, 2, 4), dtype=np.int32)
+    arr[1, 0, 1] = 1
+    arr[2, 0, 1] = 1
+    arr[3, 0, 1] = 1
+    arr[4, 0, 1] = 2  # solid east of row end
+    arr[1, 0, 3] = 1  # isolated post
+    arr[3, 0, 3] = 1  # wall with leaves north of it
+    arr[3, 0, 2] = 3  # leaves
+    return FakeGrid(arr, _WALL_PALETTE)
+
+
+def test_is_wall_block_gate(assets_root):
+    """Value-domain gate: wall-like passes; fence/pane/vine analogs don't."""
+    assert pf._is_wall_block("test:test_wall", assets_root) is True
+    # Boolean true/false domain (fence/pane analog): must NOT pass.
+    assert pf._is_wall_block("test:test_multi", assets_root) is False
+    # Variants block (no multipart): must NOT pass.
+    assert pf._is_wall_block("test:test_tint_plain", assets_root) is False
+    # Missing blockstate / no assets: safe False.
+    assert pf._is_wall_block("test:nope_missing", assets_root) is False
+    assert pf._is_wall_block("test:test_wall", None) is False
+
+
+def test_build_wall_connect(assets_root, tex_cache):
+    """Pass 1: per-cell connects + above flags from the static grid."""
+    grid = _wall_row_grid()
+    arr, palette, _ = grid.to_dense()
+    wc = pf._build_wall_connect(arr, palette, assets_root, tex_cache)
+    # Row start: connects east (wall) only.
+    e = wc[(1, 0, 1)]
+    assert e["east"] is True
+    assert e["west"] is False and e["north"] is False and e["south"] is False
+    # Row middle: connects both ways.
+    assert wc[(2, 0, 1)]["east"] is True
+    assert wc[(2, 0, 1)]["west"] is True
+    # Row end: connects west (wall) and east (solid cube).
+    assert wc[(3, 0, 1)]["west"] is True
+    assert wc[(3, 0, 1)]["east"] is True
+    # Isolated post: no connects.
+    iso = wc[(1, 0, 3)]
+    assert all(iso[d] is False for d in ("north", "south", "east", "west"))
+    # v0 DIVERGENCE (documented): leaves count as solid via the AO leaves
+    # exception, so the wall over-connects to leaves vs vanilla (which
+    # needs a sturdy face). Asserted here as the v0 behavior.
+    assert wc[(3, 0, 3)]["north"] is True  # leaves at (3,0,2)
+    assert wc[(3, 0, 3)]["south"] is False
+    assert wc[(1, 0, 1)]["above_solid"] is False
+    assert wc[(1, 0, 1)]["above_any"] is False
+
+
+def test_infer_wall_props_logic():
+    """Pass 2 pure logic on a hand-made wall_connect (no assets needed)."""
+    def entry(**kw):
+        e = {"north": False, "south": False, "east": False, "west": False,
+             "above_solid": False, "above_any": False}
+        e.update(kw)
+        return e
+
+    arr = np.zeros((1, 1, 1), dtype=np.int32)
+    palette = ["minecraft:air"]
+
+    # Isolated post: all false, up=true (center post), waterlogged=false.
+    got = pf._infer_wall_props("test:test_wall", 0, 0, 0, arr, palette,
+                               {(0, 0, 0): entry()})
+    assert got == {"north": "false", "south": "false", "east": "false",
+                   "west": "false", "up": "true", "waterlogged": "false"}
+
+    # Straight row (E+W): low arms, up=false (flat wall).
+    got = pf._infer_wall_props("test:test_wall", 0, 0, 0, arr, palette,
+                               {(0, 0, 0): entry(east=True, west=True)})
+    assert got["east"] == "low" and got["west"] == "low"
+    assert got["up"] == "false"
+
+    # Corner (N+E): up=true.
+    got = pf._infer_wall_props("test:test_wall", 0, 0, 0, arr, palette,
+                               {(0, 0, 0): entry(north=True, east=True)})
+    assert got["up"] == "true"
+
+    # Solid block above: tall arms.
+    got = pf._infer_wall_props("test:test_wall", 0, 0, 0, arr, palette,
+                               {(0, 0, 0): entry(north=True, south=True,
+                                                 above_solid=True,
+                                                 above_any=True)})
+    assert got["north"] == "tall" and got["south"] == "tall"
+    assert got["up"] == "true"
+
+    # Explicit props win over inference: the returned dict omits explicit
+    # keys, so the caller's merge keeps the explicit values.
+    got = pf._infer_wall_props("test:test_wall[north=low,up=false]", 0, 0, 0,
+                               arr, palette,
+                               {(0, 0, 0): entry(north=True,
+                                                 above_solid=True,
+                                                 above_any=True)})
+    assert "north" not in got  # explicit: stays north=low, not tall
+    assert "up" not in got  # explicit: stays up=false
+    assert got["south"] == "false"  # missing keys still inferred
+
+
+def test_wall_does_not_occlude_ao(assets_root, tex_cache):
+    """Walls never fill their cell -> must not occlude neighbors for AO."""
+    assert pf._block_occludes_ao("test:test_wall", assets_root,
+                                 tex_cache) is False
+    # Sanity: solid cube still occludes.
+    assert pf._block_occludes_ao("test:test_tint_plain", assets_root,
+                                 tex_cache) is True
+
+
+def test_wall_row_renders_without_fallback(tmp_path, assets_root):
+    """render(): walls resolve per-cell; no magenta, no false untrusted."""
+    grid = _wall_row_grid()
+    views = parse_views("iso")
+    res = pf.render(grid, tmp_path / "out", views, tmp_path,
+                    presentation=True)
+    assert "test:test_wall" not in res.info["untrusted_blocks"]
+    assert res.info["untrusted_blocks"] == {}
+    out = Path(res[0])
+    assert out.exists() and out.stat().st_size > 10_000
+    img = Image.open(res[0]).convert("RGB")
+    px = img.load()
+    W, H = img.size
+    magenta = sum(1 for x in range(0, W, 4) for y in range(0, H, 4)
+                  if px[x, y] == (255, 0, 255))
+    assert magenta == 0
