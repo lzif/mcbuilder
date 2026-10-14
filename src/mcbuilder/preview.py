@@ -43,7 +43,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from .views import View
 
@@ -179,13 +179,15 @@ _DEFAULT_PROPS = {
     # Sign fix (2026-10-10): vanilla sign template models key variants on
     # rotation=/attached=, so bare oak_sign / oak_hanging_sign need these
     # defaults to resolve instead of degrading to the fallback cube.
-    # RE-AUDIT WARNING: _match_variant only requires every key-pair in a
-    # variant key to be satisfied, so defaults additions are NON-monotonic:
-    # tripwire.json (32 variants) and tripwire_hook.json (16) DO key on
-    # attached=, and stay unmatched only because those variant keys also
-    # require props absent from these defaults (east/west/north/south/
-    # powered). Adding a default like east="false" later could silently
-    # start matching those variants. Re-audit this dict on every addition.
+    # MONOTONICITY NOTE (2026-10-14, finding 2): _match_variant rejects a
+    # variant only on contradiction with an EXPLICIT prop — defaults only
+    # score. Adding a default can therefore only break ties toward
+    # variants that agree with it; it can never strand a valid partial
+    # blockstate with no match (the old strict rule did exactly that for
+    # lightning_rod/fence_gate/door/campfire/bell, fixed 2026-10-14).
+    # The old tripwire/tripwire_hook concern (a new default silently
+    # matching new variants) is now a tie-break preference, not a
+    # correctness cliff — but still re-audit this dict on every addition.
     # The rotation default is safe: no non-sign blockstate in the 26.2
     # cache keys on rotation= (skulls use the empty-string variant).
     "rotation": "0",
@@ -198,19 +200,43 @@ _DEFAULT_PROPS = {
 }
 
 
-def _match_variant(variants: dict, props: dict[str, str]):
-    """Pick the most specific variant whose key pairs are all satisfied."""
-    best, best_n = None, -1
+def _match_variant(variants: dict, explicit_props: dict[str, str],
+                   default_props: dict[str, str]):
+    """Pick the variant contradicting no explicit prop, best default fit.
+
+    A variant is rejected ONLY when one of its key pairs contradicts an
+    *explicit* user property — defaults never reject, they only score.
+    Survivors are scored by ``(matched_explicit_count,
+    matched_default_count)``; ties keep file order (dicts preserve it).
+    This is monotonic in the defaults: adding a default can only break
+    ties toward variants that agree with it, never strand a valid partial
+    blockstate with no match (the old strict-every-pair rule degraded
+    ``lightning_rod[facing=south]`` etc. to magenta because ``powered``
+    had no default). Every valid partial blockstate resolves: the variant
+    matching the full default state (with explicit overrides) never
+    contradicts an explicit prop, so at least one candidate survives.
+    """
+    best, best_score = None, None
     for key, value in variants.items():
         pairs = [p for p in key.split(",") if p] if key else []
+        n_exp = n_def = 0
         ok = True
         for p in pairs:
             k, _, v = p.partition("=")
-            if props.get(k) != v:
-                ok = False
-                break
-        if ok and len(pairs) > best_n:
-            best, best_n = value, len(pairs)
+            if k in explicit_props:
+                if explicit_props[k] != v:
+                    ok = False
+                    break
+                n_exp += 1
+            elif default_props.get(k) == v:
+                n_def += 1
+            # A pair keying on an unknown prop is neither confirmed nor
+            # contradicted — it simply scores nothing.
+        if not ok:
+            continue
+        score = (n_exp, n_def)
+        if best_score is None or score > best_score:
+            best, best_score = value, score
     if isinstance(best, list):
         best = best[0] if best else None
     return best if isinstance(best, dict) else None
@@ -244,12 +270,10 @@ def _do_resolve(block_name: str, props: dict, root: Path):
     model_ref = None
     variants = bs.get("variants")
     if variants:
-        # Fill missing props from vanilla defaults so partial canonical
-        # blockstates (e.g. stairs without ``shape``, logs without ``axis``)
-        # still match a variant — same convention as the faithful tier.
-        full_props = dict(_DEFAULT_PROPS)
-        full_props.update(props)
-        var = _match_variant(variants, full_props)
+        # Partial canonical blockstates (e.g. stairs without ``shape``,
+        # logs without ``axis``) match the closest variant: explicit
+        # props reject, defaults only score (see _match_variant).
+        var = _match_variant(variants, props, _DEFAULT_PROPS)
         if var:
             model_ref = var.get("model")
     elif bs.get("multipart"):
@@ -329,7 +353,13 @@ def _do_resolve(block_name: str, props: dict, root: Path):
                 # faithful tier): the convert makes it moot.
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    images[var] = im.convert("RGB")
+                    img = im.convert("RGBA")
+                # Keep RGBA only when the texture actually uses
+                # transparency (cutout sprites); opaque textures stay RGB
+                # (same rule as the faithful tier).
+                if img.getchannel("A").getextrema() == (255, 255):
+                    img = img.convert("RGB")
+                images[var] = img
         except Exception:
             images[var] = None
 
@@ -519,6 +549,12 @@ def _fallback_color(block_name: str) -> tuple[int, int, int]:
 def _shade(img: Image.Image, factor: float) -> Image.Image:
     if factor >= 1.0:
         return img
+    if img.mode == "RGBA":
+        # Shade RGB only — alpha is transparency, not brightness.
+        r, g, b, a = img.split()
+        shaded = [c.point(lambda v: min(255, int(v * factor)))
+                  for c in (r, g, b)]
+        return Image.merge("RGBA", (*shaded, a))
     return img.point(lambda v: min(255, int(v * factor)))
 
 
@@ -556,7 +592,14 @@ def _draw_face(canvas: Image.Image, corners_px, tex: Image.Image) -> None:
     ImageDraw.Draw(mask).polygon(
         [(x - x0, y - y0) for x, y in (nw, sw, se, ne)], fill=255
     )
-    canvas.paste(warped, (x0, y0), mask)
+    if warped.mode == "RGBA":
+        # Cutout sprites (lanterns, chains, ladders): combine the face
+        # polygon with the texture alpha so transparent texels are
+        # skipped instead of pasting as black.
+        eff = ImageChops.darker(mask, warped.getchannel("A"))
+        canvas.paste(warped.convert("RGB"), (x0, y0), eff)
+    else:
+        canvas.paste(warped, (x0, y0), mask)
 
 
 def _overlay_label_and_compass(img: Image.Image, view: View,
@@ -637,7 +680,7 @@ def _crop_bounds(arr: np.ndarray, palette: list) -> tuple[tuple[int, int], ...] 
 
 
 def _render_view(arr, palette, crop, view, tex_cache, fallback_blocks,
-                 assets_root) -> Image.Image:
+                 assets_root, renderable) -> Image.Image:
     d, r, u = _camera(view)
     (x0, x1), (y0, y1), (z0, z1) = crop
 
@@ -685,10 +728,19 @@ def _render_view(arr, palette, crop, view, tex_cache, fallback_blocks,
             face_tex = _build_face_textures(block, assets_root, fallback_blocks)
             tex_cache[idx] = face_tex
 
-        # Visible faces, farthest first.
+        # Visible faces, farthest first. A face is skipped when the
+        # neighbor cell in its outward direction is itself renderable
+        # (finding 1 — vanilla neighbor-face culling, adapted: this tier
+        # draws full cubes with no asset context, so any renderable
+        # non-air neighbor occludes).
         visible = []
         for name, normal, offsets in _FACES:
             if sum(n * dd for n, dd in zip(normal, d)) < -1e-9:
+                nx, ny, nz = x + normal[0], y + normal[1], z + normal[2]
+                if (0 <= nx < arr.shape[0] and 0 <= ny < arr.shape[1]
+                        and 0 <= nz < arr.shape[2]
+                        and renderable[nx, ny, nz]):
+                    continue
                 pts = np.array(
                     [[x + ox, y + oy, z + oz] for ox, oy, oz in offsets],
                     dtype=float,
@@ -749,6 +801,10 @@ def render(grid, out_dir: str | Path, views: list[View],
     arr = np.asarray(arr, dtype=np.int32)
     crop = _crop_bounds(arr, palette)
     assets_root = _resolve_assets_root(assets_dir)
+    # Neighbor-face culling (finding 1): a face is skipped when the
+    # neighbor cell in its outward direction is itself renderable
+    # (non-air). View-independent — computed once, shared across views.
+    renderable = _renderable_mask(arr, palette)
 
     tex_cache: dict[int, dict] = {}
     fallback_blocks: set[str] = set()
@@ -761,7 +817,7 @@ def render(grid, out_dir: str | Path, views: list[View],
             _overlay_label_and_compass(img, view, r, u)
         else:
             img = _render_view(arr, palette, crop, view, tex_cache,
-                               fallback_blocks, assets_root)
+                               fallback_blocks, assets_root, renderable)
         path = out / f"{view.label}.png"
         img.save(path)
         paths.append(path)

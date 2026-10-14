@@ -35,7 +35,7 @@ def test_rot_x_180_flips_y_z():
 
 def _tall_centroid(quads):
     xs, zs, n = 0.0, 0.0, 0
-    for pts, _n, _tex in quads:
+    for pts, _n, _tex, _cull, _flat in quads:
         if sum(p[1] for p in pts) / 4 > 0.6:
             for p in pts:
                 xs += p[0]
@@ -68,7 +68,7 @@ def test_fake_stair_top_half(assets_root, tex_cache):
     assert not fb
     # Back element (x>0.5 mass) on the east side, in the lower half.
     xs, ys, n = 0.0, 0.0, 0
-    for pts, _n, _tex in quads:
+    for pts, _n, _tex, _cull, _flat in quads:
         if sum(p[0] for p in pts) / 4 > 0.6:
             for p in pts:
                 xs += p[0]
@@ -145,7 +145,7 @@ def test_vanilla_top_half_stair():
     # (+Z) in the LOWER half (x=180 is a vertical mirror); the slab is
     # on top.
     lo_z, lo_n, hi_n = 0.0, 0, 0
-    for pts, _n, _t in quads:
+    for pts, _n, _t, _cull, _flat in quads:
         for p in pts:
             if p[1] < 0.4:
                 lo_z += p[2]
@@ -459,7 +459,7 @@ def _quads_by_normal(canonical):
     quads, fb = pf.resolve_block_quads(canonical, None, {}, set())
     assert not fb, canonical
     by_normal = {}
-    for ordered, n, img in quads:
+    for ordered, n, img, _cull, _flat in quads:
         by_normal[n] = (ordered, img)
     return by_normal
 
@@ -531,7 +531,7 @@ def test_fluid_quads_deterministic():
     first, _ = pf.resolve_block_quads("minecraft:water", None, {}, set())
     second, _ = pf.resolve_block_quads("minecraft:water", None, {}, set())
     assert len(first) == len(second) == 6
-    for (o1, n1, _i1), (o2, n2, _i2) in zip(first, second):
+    for (o1, n1, _i1, _c1, _f1), (o2, n2, _i2, _c2, _f2) in zip(first, second):
         assert n1 == n2
         assert o1 == o2
 
@@ -643,7 +643,7 @@ def test_chest_textures_per_variant():
         assert len(quads) >= 15, (name, len(quads))
         # Overall mean color across the textured quads.
         rs = gs = bs = n = 0
-        for _, _, tex in quads:
+        for _, _, tex, _cull, _flat in quads:
             for p in tex.getdata():
                 rs += p[0]
                 gs += p[1]
@@ -1287,3 +1287,219 @@ def test_wall_row_renders_without_fallback(tmp_path, assets_root):
     magenta = sum(1 for x in range(0, W, 4) for y in range(0, H, 4)
                   if px[x, y] == (255, 0, 255))
     assert magenta == 0
+
+
+# ------------------------------------------------- finding 7: fence/pane inference
+
+
+def _connector_grid(cells):
+    """VoxelGrid -> (arr, palette) for a list of (x, y, z, block)."""
+    from mcbuilder import voxels
+
+    g = voxels.VoxelGrid()
+    for x, y, z, b in cells:
+        g.place(x, y, z, b, None)
+    return g.to_dense()[:2]
+
+
+def test_is_horiz_connector_block():
+    assert pf._is_horiz_connector_block("minecraft:oak_fence")
+    assert pf._is_horiz_connector_block("minecraft:glass_pane")
+    assert pf._is_horiz_connector_block("minecraft:purple_stained_glass_pane")
+    assert pf._is_horiz_connector_block("minecraft:iron_bars")
+    assert not pf._is_horiz_connector_block("minecraft:oak_fence_gate")
+    assert not pf._is_horiz_connector_block("minecraft:redstone_wire")
+    assert not pf._is_horiz_connector_block("minecraft:stone_brick_wall")
+    assert not pf._is_horiz_connector_block("minecraft:stone")
+
+
+def test_fence_row_infers_connections():
+    arr, palette = _connector_grid([
+        (0, 0, 0, "minecraft:oak_fence"),
+        (1, 0, 0, "minecraft:oak_fence"),
+        (2, 0, 0, "minecraft:oak_fence"),
+    ])
+    cc = pf._build_connector_connect(arr, palette, _REAL_ROOT, {})
+    assert cc[(0, 0, 0)]["east"] is True
+    assert cc[(0, 0, 0)]["west"] is False
+    mid = pf._infer_connector_props("minecraft:oak_fence", 1, 0, 0, cc)
+    assert mid == {"north": "false", "south": "false", "east": "true",
+                   "west": "true", "waterlogged": "false"}
+
+
+def test_fence_connects_to_gate_and_solid():
+    arr, palette = _connector_grid([
+        (0, 0, 0, "minecraft:oak_fence"),
+        (1, 0, 0, "minecraft:oak_fence_gate[facing=north]"),
+        (0, 0, 1, "minecraft:stone"),
+    ])
+    cc = pf._build_connector_connect(arr, palette, _REAL_ROOT, {})
+    entry = cc[(0, 0, 0)]
+    assert entry["east"] is True   # fence gate
+    assert entry["south"] is True  # solid face
+
+
+def test_pane_connects_to_bars_walls_and_solid():
+    # NB: _build_connector_connect keys by ARRAY coords (to_dense crops to
+    # the placed bbox), so this grid starts at the origin.
+    arr, palette = _connector_grid([
+        (0, 0, 1, "minecraft:glass_pane"),
+        (0, 0, 0, "minecraft:iron_bars"),
+        (0, 0, 2, "minecraft:stone_brick_wall"),
+        (1, 0, 1, "minecraft:stone"),
+    ])
+    cc = pf._build_connector_connect(arr, palette, _REAL_ROOT, {})
+    entry = cc[(0, 0, 1)]
+    assert entry == {"north": True, "south": True,
+                     "east": True, "west": False}, entry
+
+
+def test_connector_explicit_props_win():
+    cc = {(0, 0, 0): {"north": True, "south": True,
+                      "east": True, "west": True}}
+    got = pf._infer_connector_props(
+        "minecraft:oak_fence[north=false]", 0, 0, 0, cc)
+    # Only MISSING props are inferred (explicit > inferred); the caller
+    # merges explicit back in.
+    assert "north" not in got
+    assert got["south"] == "true"
+
+
+def test_inferred_fence_renders_connected_not_fallback():
+    # The middle fence of a 3-row resolves 26 quads (post + 2 arms);
+    # the bare blockstate without inference is 6 (post only).
+    eff = ("minecraft:oak_fence[east=true,north=false,south=false,"
+           "waterlogged=false,west=true]")
+    quads, fb = pf.resolve_block_quads(eff, _REAL_ROOT, {}, set())
+    assert not fb and len(quads) == 26, (fb, len(quads))
+
+
+# finding 1: neighbor face culling (cullface)
+# ---------------------------------------------------------------------------
+
+@needs_real_assets
+def test_cullface_propagated_from_model():
+    # Vanilla cube.json sets cullface on every face: each quad carries
+    # its outward normal as the cull direction.
+    quads, fb = pf.resolve_block_quads("minecraft:stone", _REAL_ROOT,
+                                       {}, set())
+    assert not fb and len(quads) == 6
+    for _pts, n, _tex, cull, _flat in quads:
+        assert cull == n == pf._snap_normal(n)
+
+
+@needs_real_assets
+def test_cross_faces_have_no_cullface():
+    # cross.json sets no cullface: blades are never neighbor-culled.
+    quads, fb = pf.resolve_block_quads("minecraft:poppy", _REAL_ROOT,
+                                       {}, set())
+    assert not fb and len(quads) == 4
+    assert all(cull is None for _, _, _, cull, _ in quads)
+
+
+def test_quad_culled_by_neighbor():
+    # 2-wide row of stone: the shared interior faces are culled.
+    arr = np.zeros((2, 1, 1), dtype=np.int32)
+    palette = ["minecraft:stone"]
+    occ = np.zeros((4, 3, 3), dtype=bool)
+    occ[1:3, 1, 1] = True  # padded occlusion, both cells occlude
+    # East face of the west cell looks at the east cell -> culled.
+    assert pf._quad_culled_by_neighbor((1, 0, 0), 0, 0, 0, arr, palette,
+                                       "minecraft:stone", occ)
+    # West face of the west cell looks at empty padding -> kept.
+    assert not pf._quad_culled_by_neighbor((-1, 0, 0), 0, 0, 0, arr,
+                                           palette, "minecraft:stone", occ)
+    # No cullface -> never culled, even against an occluder.
+    assert not pf._quad_culled_by_neighbor(None, 0, 0, 0, arr, palette,
+                                           "minecraft:stone", occ)
+
+
+def test_same_translucent_neighbor():
+    arr = np.zeros((3, 1, 1), dtype=np.int32)
+    palette = ["minecraft:glass", "minecraft:stone",
+               "minecraft:white_stained_glass"]
+    arr[0, 0, 0] = 0
+    arr[1, 0, 0] = 0  # glass next to glass
+    arr[2, 0, 0] = 1  # glass next to stone
+    assert pf._is_same_translucent_neighbor(
+        arr, palette, "minecraft:glass", 1, 0, 0)
+    assert not pf._is_same_translucent_neighbor(
+        arr, palette, "minecraft:glass", 2, 0, 0)
+    # Different stained-glass colors don't cull each other.
+    assert not pf._is_same_translucent_neighbor(
+        arr, palette, "minecraft:white_stained_glass", 1, 0, 0)
+    # Out of bounds -> False, never raises.
+    assert not pf._is_same_translucent_neighbor(
+        arr, palette, "minecraft:glass", 9, 0, 0)
+    # Non-translucent blocks never trigger the rule.
+    assert not pf._is_same_translucent_neighbor(
+        arr, palette, "minecraft:stone", 1, 0, 0)
+
+
+# finding 3: 45°-rotated elements (cross models)
+# ---------------------------------------------------------------------------
+
+@needs_real_assets
+def test_cross_blade_keeps_float_normal():
+    # Back-face culling must see the true 45° normal, not the snapped
+    # axis — otherwise blades cull wrong at iso/az045.
+    quads, fb = pf.resolve_block_quads("minecraft:poppy", _REAL_ROOT,
+                                       {}, set())
+    assert not fb
+    normals = {tuple(round(v, 3) for v in n) for _, n, _, _, _ in quads}
+    assert any(abs(abs(v) - 0.707) < 0.01
+               for n in normals for v in n), normals
+
+
+@needs_real_assets
+def test_cross_rescale_widens_blades():
+    # cross.json sets "rescale": true: the 45° blade must span its full
+    # 14.4/16 width, not 14.4/16 * cos(45°) (~29% narrow).
+    quads, fb = pf.resolve_block_quads("minecraft:poppy", _REAL_ROOT,
+                                       {}, set())
+    assert not fb
+    widest = max(max(p[0] for p in pts) - min(p[0] for p in pts)
+                 for pts, _, _, _, _ in quads)
+    assert widest == pytest.approx(14.4 / 16, abs=0.02), widest
+
+
+@needs_real_assets
+def test_cross_is_flat_lit():
+    # cross.json: "ambientocclusion": false + per-element "shade": false
+    # -> flat=True, no 0.6x directional darkening, no AO.
+    quads, fb = pf.resolve_block_quads("minecraft:poppy", _REAL_ROOT,
+                                       {}, set())
+    assert not fb
+    assert all(flat for _, _, _, _, flat in quads)
+    # The crop must not be shade-darkened: compare against the raw
+    # texture brightness (tolerance for the crop region).
+    tex = Image.open(_REAL_ROOT / "textures/block/poppy.png").convert("RGB")
+    raw_mean = sum(sum(p) for p in tex.getdata()) / (tex.size[0] *
+                                                    tex.size[1])
+    for _pts, _n, crop, _cull, _flat in quads:
+        got = crop.convert("RGB")
+        mean = sum(sum(p) for p in got.getdata()) / (got.size[0] *
+                                                     got.size[1])
+        assert mean == pytest.approx(raw_mean, rel=0.15), (mean, raw_mean)
+
+
+@needs_real_assets
+def test_lantern_mirrored_uv_flipped():
+    # template_lantern.json's side faces use "uv": [14, 1, 11, 3]
+    # (u0 > u1): the crop must be mirrored, not min/max-sorted.
+    quads, fb = pf.resolve_block_quads("minecraft:lantern", _REAL_ROOT,
+                                       {}, set())
+    assert not fb
+    tex = Image.open(_REAL_ROOT / "textures/block/lantern.png").convert("RGB")
+    # Source region x in [11, 14): left column vs right column differ in
+    # the real texture (the lantern side has asymmetric detail).
+    src_left = tex.crop((11, 1, 12, 3))
+    src_right = tex.crop((13, 1, 14, 3))
+    assert list(src_left.getdata()) != list(src_right.getdata())
+    # A side quad's crop: its left column must match the SOURCE's right
+    # column (mirrored), proving the flip was applied.
+    side = [q for q in quads if q[2].size == (3, 2)]
+    assert side, [q[2].size for q in quads]
+    crop = side[0][2].convert("RGB")
+    crop_left = [crop.getpixel((0, y)) for y in range(2)]
+    assert crop_left == [src_right.getpixel((0, y)) for y in range(2)]

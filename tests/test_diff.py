@@ -56,8 +56,13 @@ def _stairs_south(b) -> None:
     b.set(0, 0, 0, "minecraft:oak_stairs[facing=south,half=bottom]")
 
 
-def _make_run(dist: Path, name: str, build_fn, *, views=()) -> Path:
-    """Build a fake run dir: real BUILD -> real .nbt + hand-written report.json."""
+def _make_run(dist: Path, name: str, build_fn, *, views=(), origin=None) -> Path:
+    """Build a fake run dir: real BUILD -> real .nbt + hand-written report.json.
+
+    ``origin=None`` writes a legacy report without ``origin`` (diff falls
+    back to the [0, 0, 0] bbox-min frame); ``origin="auto"`` records the
+    real placed-bbox origin like ``mcbuild run`` does.
+    """
     b = build_mod.Build(seed=1)
     with b:
         build_fn(b)
@@ -66,6 +71,9 @@ def _make_run(dist: Path, name: str, build_fn, *, views=()) -> Path:
     export_nbt_mod.write_structure_nbt(
         b.grid, run / "hut.nbt", data_version=4189, include_air=False
     )
+    if origin == "auto":
+        _pb = b.grid._placed_bounds()
+        origin = list(_pb[0]) if _pb else [0, 0, 0]
     views_entries = [
         {
             "file": f"previews/{label}.png",
@@ -86,6 +94,7 @@ def _make_run(dist: Path, name: str, build_fn, *, views=()) -> Path:
         run_dir=str(run),
         artifacts=[{"file": "hut.nbt", "format": "nbt", "data_version": 4189}],
         overwritten_placements=0,
+        origin=origin,
     )
     report_mod.write_report(report, run / "report.json")
     return run
@@ -314,3 +323,129 @@ def test_cli_diff_writes_comparison_image(tmp_path, capsys):
     img = dist / "diff-run-001-run-002.png"
     assert img.is_file()
     assert f"comparison: {img}" in out
+
+
+# ------------------------------------------------- finding 8: world origin
+
+
+def _build_tower_and_islet(b, islet_dx: int) -> None:
+    # The finding-8 scenario: an untouched tower plus one islet that moves.
+    b.box((0, 0, 0), (0, 4, 0), "minecraft:stone")  # tower column
+    b.set(islet_dx, 0, 5, "minecraft:oak_planks")  # satellite islet
+
+
+def test_diff_world_origin_flags_only_the_moved_islet(tmp_path):
+    dist = tmp_path / "dist"
+    a = _make_run(dist, "run-001",
+                  lambda b: _build_tower_and_islet(b, 0), origin="auto")
+    b = _make_run(dist, "run-002",
+                  lambda b: _build_tower_and_islet(b, 2), origin="auto")
+    d = diff_mod.diff_run_dirs(a, b)
+    # The tower (5 stone cells at x=0) is untouched in world coordinates:
+    # only the islet's old/new cells appear.
+    assert d.changed == []
+    assert d.removed == [((0, 0, 5), "minecraft:oak_planks")]
+    assert d.added == [((2, 0, 5), "minecraft:oak_planks")]
+
+
+def test_diff_legacy_report_without_origin_keeps_bbox_frame(tmp_path):
+    # Reports predating `origin` translate by [0, 0, 0]: a wholesale move
+    # still reports as identical (the old documented behavior).
+    dist = tmp_path / "dist"
+    a = _make_run(dist, "run-001", _build_a)
+    b = _make_run(dist, "run-002", _build_a_shifted)
+    assert diff_mod.diff_run_dirs(a, b).is_empty
+
+
+def test_diff_origin_recorded_in_report(tmp_path):
+    dist = tmp_path / "dist"
+    run = _make_run(dist, "run-001", _build_a_shifted, origin="auto")
+    import json
+
+    report = json.loads((run / "report.json").read_text(encoding="utf-8"))
+    assert report["origin"] == [10, 5, 3]
+
+
+def _write_views_report(run: Path, entries) -> None:
+    import json
+
+    report = json.loads((run / "report.json").read_text(encoding="utf-8"))
+    report["views"] = entries
+    (run / "report.json").write_text(json.dumps(report), encoding="utf-8")
+
+
+def _touch_png(run: Path, rel: str) -> None:
+    p = run / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(p)
+
+
+def test_first_common_view_prefers_direction_trusted(tmp_path):
+    dist = tmp_path / "dist"
+    a = _make_run(dist, "run-001", _build_a)
+    b = _make_run(dist, "run-002", _build_a)
+    entries = [
+        {"file": "previews/iso.png", "label": "iso",
+         "azimuth": 45, "elevation": 25,
+         "directions_untrusted": True, "directions_trusted": False},
+        {"file": "previews_faithful/iso.png", "label": "iso",
+         "azimuth": 45, "elevation": 25,
+         "directions_untrusted": False, "directions_trusted": True},
+    ]
+    for run in (a, b):
+        _write_views_report(run, entries)
+        _touch_png(run, "previews/iso.png")
+        _touch_png(run, "previews_faithful/iso.png")
+    pa, pb = diff_mod._first_common_view(a, b)
+    assert pa == a / "previews_faithful" / "iso.png"
+    assert pb == b / "previews_faithful" / "iso.png"
+
+
+def test_first_common_view_falls_back_to_fast_tier(tmp_path):
+    dist = tmp_path / "dist"
+    a = _make_run(dist, "run-001", _build_a)
+    b = _make_run(dist, "run-002", _build_a)
+    entries = [
+        {"file": "previews/iso.png", "label": "iso",
+         "azimuth": 45, "elevation": 25,
+         "directions_untrusted": True, "directions_trusted": False},
+    ]
+    for run in (a, b):
+        _write_views_report(run, entries)
+        _touch_png(run, "previews/iso.png")
+    pa, pb = diff_mod._first_common_view(a, b)
+    assert pa == a / "previews" / "iso.png"
+
+
+# ------------------------------------------------- finding 8: rng namespaces
+
+
+def test_rng_shared_stream_unchanged_without_namespace():
+    b = build_mod.Build(seed=7)
+    assert b.rng() is b.rng()
+
+
+def test_rng_namespace_is_deterministic_and_independent():
+    b1 = build_mod.Build(seed=7)
+    b2 = build_mod.Build(seed=7)
+    assert [b1.rng("walls").random() for _ in range(3)] == [
+        b2.rng("walls").random() for _ in range(3)
+    ]
+    # Different namespaces diverge; the shared stream is untouched by them.
+    assert b1.rng("walls").random() != b1.rng("roof").random()
+    shared_before = b1.rng().random()
+    b1.rng("walls").random()
+    assert b1.rng().random() != shared_before  # shared stream still advances
+
+
+def test_rng_namespace_fresh_each_call():
+    # Each call restarts at the same position: section edits elsewhere
+    # cannot perturb this section's draws.
+    b = build_mod.Build(seed=7)
+    assert b.rng("sec").random() == b.rng("sec").random()
+
+
+def test_rng_namespace_rejects_non_string():
+    b = build_mod.Build(seed=7)
+    with pytest.raises(build_mod.BuildError, match="namespace must be a string"):
+        b.rng(123)

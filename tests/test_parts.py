@@ -269,3 +269,38 @@ def test_composition_hut_corner():
 
     # nothing else got placed
     assert len(b.placements) == 4 + 6 + 3
+
+
+# ------------------------------------------------- doc consistency (finding 10)
+
+def _facing_rule_paragraph(doc: str) -> str:
+    """Extract the 'Facing rule' paragraph from a stairs_run docstring."""
+    lines = doc.splitlines()
+    start = next(
+        i for i, ln in enumerate(lines) if ln.strip().startswith("Facing rule")
+    )
+    para = []
+    for ln in lines[start:]:
+        if not ln.strip():
+            break
+        para.append(ln.strip())
+    return " ".join(para)
+
+
+def test_stairs_run_docstrings_agree_on_facing_rule():
+    """The parts.py / part.py stairs_run docstrings must state the same
+    facing rule (finding 10: parts.py once claimed the OPPOSITE rule)."""
+    from mcbuilder import part as part_mod
+
+    for mod in (parts, part_mod):
+        doc = mod.stairs_run.__doc__
+        assert doc, f"{mod.__name__}.stairs_run has no docstring"
+        para = _facing_rule_paragraph(doc)
+        assert "OPPOSITE of the ascent" not in para, (
+            f"{mod.__name__}.stairs_run docstring still claims the "
+            f"opposite-facing rule: {para!r}"
+        )
+        assert "facing`` = the ascent direction" in para, (
+            f"{mod.__name__}.stairs_run docstring lost the facing rule: "
+            f"{para!r}"
+        )

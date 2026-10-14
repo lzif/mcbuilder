@@ -331,3 +331,99 @@ def test_fast_fluid_no_warning(tmp_path):
     assert faces["north"].getpixel((0, 0)) == (255, 110, 20)
     assert "minecraft:water" not in fb
     assert "minecraft:lava" not in fb
+
+
+# ------------------------------------------------- finding 2: _match_variant
+
+from mcbuilder.preview import _DEFAULT_PROPS, _match_variant
+
+
+def test_match_variant_explicit_contradiction_rejects():
+    variants = {
+        "facing=north": {"model": "m_north"},
+        "facing=south": {"model": "m_south"},
+    }
+    assert _match_variant(variants, {"facing": "up"}, _DEFAULT_PROPS) is None
+
+
+def test_match_variant_explicit_beats_default():
+    variants = {
+        "axis=x": {"model": "m_x"},
+        "axis=y": {"model": "m_y"},
+        "axis=z": {"model": "m_z"},
+    }
+    assert _match_variant(variants, {"axis": "x"}, _DEFAULT_PROPS)["model"] == "m_x"
+    # No explicit prop: the vanilla default (axis=y) wins on default score.
+    assert _match_variant(variants, {}, _DEFAULT_PROPS)["model"] == "m_y"
+
+
+def test_match_variant_unknown_prop_never_rejects():
+    # powered= is absent from _DEFAULT_PROPS: the old strict rule degraded
+    # lightning_rod[facing=south] to magenta because the variant key also
+    # carries powered=false. Now it resolves.
+    variants = {
+        "facing=south,powered=false": {"model": "m_rod"},
+    }
+    got = _match_variant(variants, {"facing": "south"}, _DEFAULT_PROPS)
+    assert got is not None and got["model"] == "m_rod"
+
+
+def test_match_variant_tie_breaks_by_file_order():
+    variants = {
+        "": {"model": "m_first"},
+        "waterlogged=false": {"model": "m_second"},
+    }
+    # waterlogged=false IS a default, so the second variant outscores the
+    # empty key on defaults. For a true tie, use an unknown prop.
+    variants2 = {
+        "mystery=a": {"model": "m_first"},
+        "mystery=b": {"model": "m_second"},
+    }
+    assert _match_variant(variants2, {}, _DEFAULT_PROPS)["model"] == "m_first"
+    # Sanity: the default-backed variant wins when defaults apply.
+    assert _match_variant(variants, {}, _DEFAULT_PROPS)["model"] == "m_second"
+
+
+def test_match_variant_weighted_list_takes_first():
+    variants = {"": [{"model": "w0"}, {"model": "w1"}]}
+    assert _match_variant(variants, {}, _DEFAULT_PROPS)["model"] == "w0"
+
+
+def test_match_variant_monotonic_in_defaults():
+    # Adding a default must never strand a previously resolving blockstate.
+    variants = {"facing=north,half=lower": {"model": "m_door"}}
+    before = _match_variant(variants, {"facing": "north"}, {})
+    after = _match_variant(variants, {"facing": "north"}, {"half": "bottom"})
+    assert before is not None and after is not None
+
+
+# finding 1: neighbor face culling (fast tier)
+# ---------------------------------------------------------------------------
+
+def test_fast_tier_culls_buried_faces(monkeypatch, tmp_path):
+    """A solid 2x2x2 cube from straight above draws exactly the 4 top
+    faces: interior top faces (bottom layer, neighbor above) and all
+    side/bottom faces are culled before drawing."""
+    import mcbuilder.preview as fast
+    calls = []
+    monkeypatch.setattr(fast, "_draw_face", lambda *a: calls.append(a))
+    arr = np.ones((2, 2, 2), dtype=np.int32)  # all stone (idx 1)
+    grid = FakeGrid(arr, ["minecraft:air", "minecraft:stone"])
+    fast.render(grid, tmp_path, parse_views("top"), None)
+    assert len(calls) == 4, len(calls)
+
+
+def test_fast_tier_keeps_exposed_faces(monkeypatch, tmp_path):
+    """Two separated cubes still draw all their camera-facing faces —
+    culling only removes faces with a renderable neighbor."""
+    import mcbuilder.preview as fast
+    calls = []
+    monkeypatch.setattr(fast, "_draw_face", lambda *a: calls.append(a))
+    arr = np.zeros((4, 1, 1), dtype=np.int32)
+    arr[0, 0, 0] = 1
+    arr[3, 0, 0] = 1  # separated by 2 air cells
+    grid = FakeGrid(arr, ["minecraft:air", "minecraft:stone"])
+    fast.render(grid, tmp_path, parse_views("top"), None)
+    # 2 cubes x 1 top face each (sides point perpendicular to the
+    # straight-down view ray and are back-face culled).
+    assert len(calls) == 2, len(calls)

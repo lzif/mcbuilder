@@ -561,6 +561,18 @@ def cmd_run(args) -> int:
             )
         )
 
+    # The .nbt artifact stores cell positions as dense-array offsets; record
+    # the array's world-space origin so `mcbuild diff` can translate both
+    # runs back to world coordinates before comparing. This MUST be the
+    # placed-bbox minimum (what to_dense() uses as the array origin,
+    # explicit air included) — not grid.bounds() (non-air only), which
+    # differs when carved air extends the placed region.
+    try:
+        _placed = grid._placed_bounds()
+    except Exception:  # noqa: BLE001 - duck-typed grids
+        _placed = None
+    _origin = list(_placed[0]) if _placed is not None else [0, 0, 0]
+
     report = report_mod.build_report(
         errors=errors,
         warnings=warnings,
@@ -570,6 +582,7 @@ def cmd_run(args) -> int:
         run_dir=str(run_dir),
         artifacts=artifacts,
         overwritten_placements=grid.overwrite_count,
+        origin=_origin,
     )
     try:
         report_mod.write_report(report, run_dir / "report.json")
@@ -638,7 +651,7 @@ def cmd_assets_fetch(args) -> int:
         Path(args.cache_dir).expanduser() if args.cache_dir else DEFAULT_CACHE_ROOT
     )
     try:
-        result = assets_mod.fetch(args.version, cache_dir)
+        result = assets_mod.fetch(args.version, cache_dir, force=args.force)
     except errors_mod.AssetError as e:
         raise CliError(f"assets fetch failed: {e}") from None
     print(
@@ -853,6 +866,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         default=None,
         help="cache directory (default: ~/.cache/mcbuilder)",
+    )
+    f.add_argument(
+        "--force",
+        action="store_true",
+        help="re-download the registry and client assets even when the "
+        "cache looks complete (repairs caches predating a newly added "
+        "asset subtree)",
     )
     f.set_defaults(func=cmd_assets_fetch)
     return p

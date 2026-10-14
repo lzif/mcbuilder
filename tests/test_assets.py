@@ -53,6 +53,11 @@ def make_fake_jar() -> bytes:
         zf.writestr("assets/minecraft/blockstates/stone.json", b'{"variants":{}}')
         zf.writestr("assets/minecraft/models/block/cube_all.json", b"{}")
         zf.writestr("assets/minecraft/textures/block/stone.png", b"\x89PNG\r\n\x1a\n")
+        # One file per _CLIENT_PREFIXES entry: the cache-completeness
+        # guard requires every prefix subtree to be non-empty.
+        zf.writestr(
+            "assets/minecraft/textures/entity/chest/normal.png", b"\x89PNG\r\n\x1a\n"
+        )
         # Must NOT be extracted:
         zf.writestr("META-INF/MANIFEST.MF", b"junk")
         zf.writestr("assets/minecraft/textures/item/stick.png", b"junk")
@@ -220,3 +225,76 @@ def test_fetch_rejects_corrupt_jar(tmp_path, monkeypatch):
     )
     with pytest.raises(AssetError, match="sha1 verification"):
         fetch("26.2", tmp_path)
+
+
+# ------------------------------------------------- finding 9
+
+
+def test_fetch_refetches_when_a_prefix_is_missing(tmp_path, monkeypatch):
+    """A cache predating a _CLIENT_PREFIXES addition (blockstates present,
+    textures/entity absent) must NOT early-return — it re-fetches."""
+    jar_bytes = make_fake_jar()
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(jar_bytes))
+    fetch("26.2", tmp_path)
+    # Simulate the pre-entity-prefix cache: drop the entity subtree.
+    import shutil
+
+    shutil.rmtree(tmp_path / "26.2" / "client" / "assets" / "minecraft"
+                  / "textures" / "entity")
+
+    calls = []
+    real_fake = fake_http_factory(jar_bytes)
+
+    def counting_fake(url, timeout=120):
+        calls.append(url)
+        return real_fake(url, timeout)
+
+    monkeypatch.setattr(assets, "_http_get", counting_fake)
+    fetch("26.2", tmp_path)
+    assert any(u == CLIENT_JAR_URL for u in calls), (
+        "stale cache (entity prefix missing) did not re-fetch the client jar"
+    )
+    assert (tmp_path / "26.2" / "client" / "assets" / "minecraft"
+            / "textures" / "entity").is_dir()
+
+
+def test_fetch_force_redownloads_complete_cache(tmp_path, monkeypatch):
+    jar_bytes = make_fake_jar()
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(jar_bytes))
+    fetch("26.2", tmp_path)
+
+    calls = []
+    real_fake = fake_http_factory(jar_bytes)
+
+    def counting_fake(url, timeout=120):
+        calls.append(url)
+        return real_fake(url, timeout)
+
+    monkeypatch.setattr(assets, "_http_get", counting_fake)
+    fetch("26.2", tmp_path, force=True)
+    assert any(u == CLIENT_JAR_URL for u in calls), (
+        "--force did not re-download the client jar"
+    )
+
+
+def test_maybe_configure_proxy_never_clobbers_user_proxy(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://user-proxy:8080")
+    # Even if the sandbox proxy resolves, the user's proxy wins.
+    monkeypatch.setattr(
+        assets.socket, "getaddrinfo", lambda *a, **k: [("ok",)]
+    )
+    assets._maybe_configure_proxy()
+    assert __import__("os").environ["HTTPS_PROXY"] == "http://user-proxy:8080"
+
+
+def test_maybe_configure_proxy_skips_unresolvable_host(monkeypatch):
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+
+    def boom(*a, **k):
+        raise OSError("no such host")
+
+    monkeypatch.setattr(assets.socket, "getaddrinfo", boom)
+    assets._maybe_configure_proxy()
+    assert "HTTPS_PROXY" not in __import__("os").environ
+    assert "HTTP_PROXY" not in __import__("os").environ

@@ -28,9 +28,10 @@ import os
 import random
 import sys
 
-from mcbuilder.blocks import canonicalize, parse
+from mcbuilder.blocks import canonicalize, parse, resolve_material
 from mcbuilder.errors import McbuilderError
 from mcbuilder.geometry import Geometry
+from mcbuilder.rotation import _check_rotation, _rotate_point, rotate_blockstate
 from mcbuilder.voxels import AIR, VoxelGrid
 
 
@@ -161,6 +162,9 @@ class Build:
         """Fill the box between corners ``c1`` and ``c2`` (inclusive, any order).
 
         The block string is placed verbatim — no axis/facing guessing.
+        ``block`` also accepts a material spec (weighted palette or
+        ``(x, y, z) -> str`` callable); see
+        :func:`mcbuilder.blocks.resolve_material`.
 
         Output bounds: ``(|dx| + 1) × (|dy| + 1) × (|dz| + 1)`` cells.
 
@@ -169,12 +173,15 @@ class Build:
         build next around it (e.g. a chimney through a roof).
         """
         (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
-        canonical = canonicalize(block)
+        plain = isinstance(block, str)
+        if plain:
+            block = canonicalize(block)
         geo = Geometry()
         for x in range(x1, x2 + 1):
             for y in range(y1, y2 + 1):
                 for z in range(z1, z2 + 1):
-                    geo.set(x, y, z, canonical)
+                    geo.set(x, y, z, block if plain
+                            else resolve_material(block, x, y, z, self._seed))
         self.place(geo, at=(0, 0, 0))
         return geo
 
@@ -184,22 +191,30 @@ class Build:
         """Hollow box walls between corners (inclusive, any order).
 
         Places the four vertical walls spanning the full height. No floor
-        and no ceiling — use :meth:`box` for those. Verbatim placement.
+        and no ceiling — use :meth:`box` for those. Verbatim placement;
+        ``block`` accepts a material spec (see :meth:`box`).
 
         Output bounds: same XZ footprint as :meth:`box`, full Y range.
 
         Returns the placed :class:`Geometry` (absolute coordinates).
         """
         (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
-        canonical = canonicalize(block)
+        plain = isinstance(block, str)
+        if plain:
+            block = canonicalize(block)
         geo = Geometry()
+
+        def _put(x, y, z):
+            geo.set(x, y, z, block if plain
+                    else resolve_material(block, x, y, z, self._seed))
+
         for y in range(y1, y2 + 1):
             for z in range(z1, z2 + 1):
-                geo.set(x1, y, z, canonical)
-                geo.set(x2, y, z, canonical)
+                _put(x1, y, z)
+                _put(x2, y, z)
             for x in range(x1 + 1, x2):
-                geo.set(x, y, z1, canonical)
-                geo.set(x, y, z2, canonical)
+                _put(x, y, z1)
+                _put(x, y, z2)
         self.place(geo, at=(0, 0, 0))
         return geo
 
@@ -288,7 +303,9 @@ class Build:
         ``block`` should be a stair block *without* a ``facing`` property
         (passing one is a :class:`BuildError` — the facing is computed,
         never merged). ``half`` defaults to ``bottom`` when absent; all
-        other properties and NBT pass through verbatim.
+        other properties and NBT pass through verbatim. ``block`` also
+        accepts a material spec (each cell resolves independently, then
+        gets its computed facing merged in).
 
         Note on preview appearance: each row's tall back faces uphill
         toward the next row up, so consecutive rows interlock with no
@@ -303,14 +320,33 @@ class Build:
         """
         if ridge not in ("x", "z"):
             raise BuildError(f"roof_gable: ridge must be 'x' or 'z', got {ridge!r}")
-        name, props, nbt = parse(block)  # ValueError on malformed
-        if "facing" in props:
-            raise BuildError(
-                "roof_gable computes 'facing' from the roof geometry; "
-                "pass the stair block without a facing property"
-            )
-        base_props = dict(props)
-        base_props.setdefault("half", "bottom")
+        plain = isinstance(block, str)
+        if plain:
+            pname, pprops, pnbt = parse(block)  # ValueError on malformed
+            if "facing" in pprops:
+                raise BuildError(
+                    "roof_gable computes 'facing' from the roof geometry; "
+                    "pass the stair block without a facing property"
+                )
+            pprops = dict(pprops)
+            pprops.setdefault("half", "bottom")
+
+        def _stair(x, y, z, facing):
+            # Per-cell stair string: `block` may be a material spec, in
+            # which case each cell resolves (then parses) independently.
+            if plain:
+                name, props, nbt = pname, pprops, pnbt
+            else:
+                s = resolve_material(block, x, y, z, self._seed)
+                name, props, nbt = parse(s)
+                if "facing" in props:
+                    raise BuildError(
+                        "roof_gable computes 'facing' from the roof geometry; "
+                        "pass the stair block without a facing property"
+                    )
+                props = dict(props)
+                props.setdefault("half", "bottom")
+            return _emit(name, {**props, "facing": facing}, nbt)
         (x1, y1, z1), (x2, _y2, z2) = _corners(c1, c2)
         if eave_height is None:
             eave = y1
@@ -333,36 +369,44 @@ class Build:
         geo = Geometry()
         for k in range(pairs):
             y = eave + k
-            lo = _emit(name, {**base_props, "facing": eave_hi}, nbt)
-            hi = _emit(name, {**base_props, "facing": eave_lo}, nbt)
             for r in range(run_lo, run_hi + 1):
                 if ridge == "x":
-                    geo.set(r, y, span_lo + k, lo)
-                    geo.set(r, y, span_hi - k, hi)
+                    geo.set(r, y, span_lo + k,
+                            _stair(r, y, span_lo + k, eave_hi))
+                    geo.set(r, y, span_hi - k,
+                            _stair(r, y, span_hi - k, eave_lo))
                 else:
-                    geo.set(span_lo + k, y, r, lo)
-                    geo.set(span_hi - k, y, r, hi)
+                    geo.set(span_lo + k, y, r,
+                            _stair(span_lo + k, y, r, eave_hi))
+                    geo.set(span_hi - k, y, r,
+                            _stair(span_hi - k, y, r, eave_lo))
         if span % 2 == 1:
             y = eave + pairs
             c = span_lo + pairs
-            ridge_block = _emit(name, {**base_props, "facing": eave_lo}, nbt)
             for r in range(run_lo, run_hi + 1):
                 if ridge == "x":
-                    geo.set(r, y, c, ridge_block)
+                    geo.set(r, y, c, _stair(r, y, c, eave_lo))
                 else:
-                    geo.set(c, y, r, ridge_block)
+                    geo.set(c, y, r, _stair(c, y, r, eave_lo))
         self.place(geo, at=(0, 0, 0))
         return geo
 
     # -- instancing: stamp Geometry datablocks (Steal #1) ----------------
 
-    def place(self, geometry, *, at: tuple[int, int, int]) -> Geometry:
+    def place(self, geometry, *, at: tuple[int, int, int],
+              rotation: str = "NONE") -> Geometry:
         """Stamp a :class:`mcbuilder.geometry.Geometry` into the grid.
 
         Every relative cell ``(dx, dy, dz)`` of the geometry lands at
         ``(at_x + dx, at_y + dy, at_z + dz)``. Last write wins on overlap
         (same rule as :meth:`set`). The geometry is never mutated — one
         instance can be stamped many times.
+
+        ``rotation`` (default ``"NONE"``) rotates the geometry's relative
+        cells about its origin ``(0, 0, 0)`` before stamping — positions
+        per :func:`mcbuilder.rotation._rotate_point`, blockstates per
+        :func:`mcbuilder.rotation.rotate_blockstate`. Equivalent to
+        ``place(geometry.rotate(rotation), at=at)``.
 
         This is the op-layer counterpart to the datablock layer
         (``mcbuilder.part.*`` factories): define once, stamp many, with
@@ -381,6 +425,7 @@ class Build:
                 f"place: expected a mcbuilder.geometry.Geometry, "
                 f"got {type(geometry).__name__}"
             )
+        _check_rotation(rotation)
         try:
             ax, ay, az = at
         except (TypeError, ValueError):
@@ -389,7 +434,15 @@ class Build:
             if isinstance(v, bool) or not isinstance(v, int):
                 raise BuildError(f"place: at coordinates must be ints, got {v!r}")
         provenance = _caller_provenance()
-        for dx, dy, dz, canonical in geometry.cells():
+        cells = geometry.cells()
+        if rotation != "NONE":
+            rotated = []
+            for dx, dy, dz, canonical in cells:
+                rdx, rdz = _rotate_point(dx, dz, 0, 0, rotation)
+                rotated.append(
+                    (rdx, dy, rdz, rotate_blockstate(canonical, rotation)))
+            cells = rotated
+        for dx, dy, dz, canonical in cells:
             self._grid.place(ax + dx, ay + dy, az + dz, canonical, provenance)
         return geometry
 
@@ -447,6 +500,63 @@ class Build:
 
         return parts.railing(self, start, end, block)
 
+    # -- curved / vector primitives (finding 6) --------------------------
+
+    def cylinder(self, center, radius, height, block, hollow=False) -> Geometry:
+        """Vertical cylinder ``height`` levels up from ``center``.
+
+        ``block`` accepts a material spec (see :meth:`box`). Returns the
+        placed :class:`Geometry` (absolute coordinates).
+        """
+        from mcbuilder import part as part_mod
+
+        geo = part_mod.cylinder(
+            center=center, radius=radius, height=height, block=block,
+            hollow=hollow, seed=self._seed)
+        self.place(geo, at=(0, 0, 0))
+        return geo
+
+    def sphere(self, center, radius, block, hollow=False, dome=False,
+               thickness=1) -> Geometry:
+        """Sphere of ``radius`` around ``center`` (``dome`` = upper half).
+
+        ``block`` accepts a material spec (see :meth:`box`). Returns the
+        placed :class:`Geometry` (absolute coordinates).
+        """
+        from mcbuilder import part as part_mod
+
+        geo = part_mod.sphere(
+            center=center, radius=radius, block=block, hollow=hollow,
+            dome=dome, thickness=thickness, seed=self._seed)
+        self.place(geo, at=(0, 0, 0))
+        return geo
+
+    def cone(self, center, radius, height, block, hollow=False) -> Geometry:
+        """Cone tapering from a base disc of ``radius`` at ``center``.
+
+        ``block`` accepts a material spec (see :meth:`box`). Returns the
+        placed :class:`Geometry` (absolute coordinates).
+        """
+        from mcbuilder import part as part_mod
+
+        geo = part_mod.cone(
+            center=center, radius=radius, height=height, block=block,
+            hollow=hollow, seed=self._seed)
+        self.place(geo, at=(0, 0, 0))
+        return geo
+
+    def line(self, p1, p2, block) -> Geometry:
+        """6-connected straight line from ``p1`` to ``p2`` (inclusive).
+
+        ``block`` accepts a material spec (see :meth:`box`). Returns the
+        placed :class:`Geometry` (absolute coordinates).
+        """
+        from mcbuilder import part as part_mod
+
+        geo = part_mod.line(p1=p1, p2=p2, block=block, seed=self._seed)
+        self.place(geo, at=(0, 0, 0))
+        return geo
+
     # -- post-processing --------------------------------------------------
 
     def recenter(self) -> None:
@@ -466,9 +576,31 @@ class Build:
 
     # -- config / introspection -------------------------------------------
 
-    def rng(self) -> random.Random:
-        """The sole RNG source for this build, seeded from ``seed``."""
-        return self._rng
+    def rng(self, namespace: str | None = None) -> random.Random:
+        """RNG for this build.
+
+        ``rng()`` (no namespace) returns the build's shared stream, seeded
+        from ``seed`` — the historical behavior. ``rng(namespace)`` returns
+        a FRESH independent stream deterministically seeded from
+        ``(seed, namespace)``, so edits to one script section never
+        perturb another section's draws (the shared stream shifts every
+        downstream draw when an earlier loop's iteration count changes,
+        which used to cascade false-positive ``mcbuild diff`` noise).
+
+        The seed string is hashed by ``random`` itself (stable across
+        processes — unlike builtin ``hash()``, which is salted per
+        process). Each call returns a new stream at the same start
+        position: ``rng("walls")`` twice gives two identical streams,
+        never a shared-advancing one — that order-independence is the
+        point. Namespace must be a string (``TypeError`` otherwise).
+        """
+        if namespace is None:
+            return self._rng
+        if not isinstance(namespace, str):
+            raise BuildError(
+                f"rng: namespace must be a string, got {namespace!r}"
+            )
+        return random.Random(f"{self._seed}\x00{namespace}")
 
     def set_views(self, views) -> None:
         """Store view configuration. Pure config — no side effects.

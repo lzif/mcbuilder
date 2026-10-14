@@ -4,12 +4,12 @@ Compares the voxel data stored in each run's ``.nbt`` deploy artifact
 (located via ``report.json``'s ``artifacts``) and reports added /
 removed / replaced cells, plus a side-by-side preview comparison image.
 
-Coordinate frame: the .nbt stores cell positions as offsets from each
-run's own bbox minimum, so the diff is anchored at each run's bbox
-origin. A build that moved wholesale reports as identical; a build whose
-bbox *origin* shifted (e.g. a cell added on the negative side) compares
-against the shifted origin. For iteration diffs, re-run the same script
-in place — the origin then only moves when the build itself changed.
+Coordinate frame: each run's ``report.json`` records the world-space
+``origin`` (``[minx, miny, minz]``) of its .nbt cell frame, and
+``load_run_voxels`` translates .nbt offsets back to world coordinates
+before diffing — so moving one islet no longer flags the untouched tower
+as changed. Runs written before ``origin`` existed translate by
+``[0, 0, 0]`` (their old bbox-min frame).
 """
 
 from __future__ import annotations
@@ -130,10 +130,10 @@ def _palette_canonical(entry) -> str:
 def load_run_voxels(run_dir: str | Path) -> dict[tuple[int, int, int], str]:
     """Load a run's voxel map from its ``.nbt`` artifact.
 
-    Returns ``{(x, y, z): canonical_block}`` with positions as bbox-min
-    offsets (the .nbt's own frame — see the module docstring) and air
-    cells excluded, mirroring the default export. Raises
-    :class:`DiffError` on anything unreadable.
+    Returns ``{(x, y, z): canonical_block}`` with positions translated to
+    WORLD coordinates via the run's ``report.json`` ``origin`` (``[0, 0,
+    0]`` for reports predating it) and air cells excluded, mirroring the
+    default export. Raises :class:`DiffError` on anything unreadable.
     """
     run_dir = Path(run_dir)
     if not run_dir.is_dir():
@@ -152,11 +152,19 @@ def load_run_voxels(run_dir: str | Path) -> dict[tuple[int, int, int], str]:
         f = nbtlib.load(str(nbt_path), gzipped=True)
     except Exception as e:  # noqa: BLE001 - surfaced as a clean message
         raise DiffError(f"{run_dir.name}: cannot read {nbt_path.name}: {e}") from None
+    origin = report.get("origin") or [0, 0, 0]
+    try:
+        ox, oy, oz = (int(v) for v in origin)
+    except (TypeError, ValueError):
+        raise DiffError(
+            f"{run_dir.name}: report.json has a malformed origin: {origin!r}"
+        ) from None
     try:
         palette = [_palette_canonical(entry) for entry in f["palette"]]
         cells: dict[tuple[int, int, int], str] = {}
         for b in f["blocks"]:
-            pos = tuple(int(v) for v in b["pos"])
+            px, py, pz = (int(v) for v in b["pos"])
+            pos = (px + ox, py + oy, pz + oz)
             block = palette[int(b["state"])]
             if blocks_mod.parse(block)[0] == voxels_mod.AIR:
                 continue  # air is "empty" in both frames
@@ -247,25 +255,45 @@ def format_diff(
 def _first_common_view(
     a_dir: str | Path, b_dir: str | Path
 ) -> tuple[Path, Path] | None:
-    """First preview view label present in both runs' reports and on disk."""
+    """First preview view label present in both runs' reports and on disk.
 
-    def views(run_dir: str | Path) -> dict[str, Path]:
+    Direction-trusted views (``previews_faithful/``, ``previews_trusted/``)
+    are preferred over the fast tier's ``previews/`` — the fast tier's
+    untrusted directions and black-box alpha sprites make for a
+    misleading comparison image.
+    """
+
+    def views(run_dir: str | Path) -> list[tuple[bool, str, Path]]:
         rp = Path(run_dir) / "report.json"
         try:
             report = json.loads(rp.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {}
-        out: dict[str, Path] = {}
+            return []
+        out: list[tuple[bool, str, Path]] = []
+        seen: set[str] = set()
         for v in report.get("views") or []:
             label, rel = v.get("label"), v.get("file")
-            if label and rel and label not in out:
-                out[label] = Path(run_dir) / rel
+            trusted = bool(v.get("directions_trusted"))
+            key = (trusted, label)
+            if label and rel and key not in seen:
+                seen.add(key)
+                out.append((trusted, label, Path(run_dir) / rel))
+        # Trusted views first; report order otherwise.
+        out.sort(key=lambda t: (not t[0],))
         return out
 
-    va, vb = views(a_dir), views(b_dir)
-    for label, pa in va.items():
-        pb = vb.get(label)
-        if pb is not None and pa.is_file() and pb.is_file():
+    va: dict[str, tuple[bool, Path]] = {}
+    for trusted, label, pa in views(a_dir):
+        # views() yields trusted entries first: first occurrence per label
+        # wins, so a label present in both previews_faithful/ and
+        # previews/ resolves to the faithful PNG.
+        va.setdefault(label, (trusted, pa))
+    for _trusted_b, label, pb in views(b_dir):
+        hit = va.get(label)
+        if hit is None:
+            continue
+        _trusted_a, pa = hit
+        if pa.is_file() and pb.is_file():
             return pa, pb
     return None
 

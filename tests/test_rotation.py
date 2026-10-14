@@ -144,3 +144,67 @@ def test_rotate_blockstate_round_trip():
 def test_rotate_blockstate_invalid_rotation():
     with pytest.raises(McbuilderError, match="invalid rotation"):
         rotate_blockstate("minecraft:stone", "FLIP")
+
+
+# ------------------------------------------------- finding 5: cardinal keys
+
+
+def test_remap_cardinal_connection_keys_cw90():
+    from mcbuilder import rotation as rot
+
+    got = rot.rotate_blockstate(
+        "minecraft:oak_fence[north=true,south=false]", "CLOCKWISE_90")
+    assert got == "minecraft:oak_fence[east=true,west=false]", got
+
+
+def test_remap_cardinal_connection_keys_ccw90_and_180():
+    from mcbuilder import rotation as rot
+
+    got = rot.rotate_blockstate(
+        "minecraft:oak_fence[east=true,west=true]", "COUNTERCLOCKWISE_90")
+    assert got == "minecraft:oak_fence[north=true,south=true]", got
+    got = rot.rotate_blockstate(
+        "minecraft:vine[north=true]", "CLOCKWISE_180")
+    assert got == "minecraft:vine[south=true]", got
+
+
+def test_remap_cardinal_keys_values_untouched():
+    from mcbuilder import rotation as rot
+
+    # Values ride along with their key; only key NAMES permute.
+    got = rot.rotate_blockstate(
+        "minecraft:oak_fence[east=false,north=true]", "CLOCKWISE_90")
+    assert got == "minecraft:oak_fence[east=true,south=false]", got
+
+
+def test_remap_compound_orientation_value():
+    from mcbuilder import rotation as rot
+
+    got = rot.rotate_blockstate(
+        "minecraft:test_block[orientation=north_up]", "CLOCKWISE_90")
+    assert got == "minecraft:test_block[orientation=east_up]", got
+
+
+def test_mirror_blockstate_swaps_facing_and_keys():
+    from mcbuilder import rotation as rot
+
+    assert rot.mirror_blockstate(
+        "minecraft:oak_stairs[facing=east,half=bottom]", "x"
+    ) == "minecraft:oak_stairs[facing=west,half=bottom]"
+    assert rot.mirror_blockstate(
+        "minecraft:oak_stairs[facing=north,half=bottom]", "z"
+    ) == "minecraft:oak_stairs[facing=south,half=bottom]"
+    assert rot.mirror_blockstate(
+        "minecraft:oak_fence[east=true,west=false]", "x"
+    ) == "minecraft:oak_fence[east=false,west=true]"
+    # up/down and axis pass through.
+    assert rot.mirror_blockstate(
+        "minecraft:oak_log[axis=x]", "x"
+    ) == "minecraft:oak_log[axis=x]"
+
+
+def test_mirror_blockstate_rejects_bad_axis():
+    from mcbuilder import rotation as rot
+
+    with pytest.raises(McbuilderError, match="invalid mirror axis"):
+        rot.mirror_blockstate("minecraft:stone", "y")

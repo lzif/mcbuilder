@@ -38,7 +38,7 @@ def _close(actual, expected, tol=2.0):
 
 
 def _up_quad_mean(quads):
-    for _pts, n, img in quads:
+    for _pts, n, img, _cull, _flat in quads:
         if n == (0, 1, 0):
             return _mean(img)
     raise AssertionError("no up quad")
@@ -95,7 +95,7 @@ def test_faithful_tints_all_cube_faces(assets_root, monkeypatch):
     assert len(quads) == 6
 
     base = _tint((200, 200, 200), tint)
-    for _pts, n, img in quads:
+    for _pts, n, img, _cull, _flat in quads:
         assert _close(_mean(img), _mul(base, pf._SHADES[n])), (n, _mean(img))
 
 
@@ -187,7 +187,7 @@ def test_fast_tier_water_fallback_color():
 def test_faithful_water_pixel(assets_root):
     quads, fb = pf.resolve_block_quads("minecraft:water", assets_root, {})
     assert fb is False
-    for _pts, n, img in quads:
+    for _pts, n, img, _cull, _flat in quads:
         if n == (0, 1, 0):  # top face, shade 1.0
             assert img.mode == "RGBA"
             assert img.getpixel((0, 0)) == (63, 118, 228, 150)

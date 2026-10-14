@@ -72,11 +72,12 @@ def stairs_run(
       rise >= 0). ``target == start`` is a valid 1-step run.
 
     Facing rule (the part computes this, the agent never hand-guesses):
-    each step's stairs block gets ``facing`` = the OPPOSITE of the ascent
-    direction, and ``half=bottom``. Stairs face the climber, so ascending
-    north means facing south, ascending east means facing west, and so on.
-    This is also how the vanilla placement convention works (a player
-    climbing toward the north places stairs facing south).
+    each step's stairs block gets ``facing`` = the ascent direction, and
+    ``half=bottom`` — the tall back sits uphill, so the run is climbable
+    via auto-step. This matches vanilla: stairs ascending northward have
+    ``facing=north`` (a player placing stairs while facing D gets
+    ``facing=D``). (This docstring must stay consistent with
+    ``mcbuilder.part.stairs_run`` — see ``test_parts.py``.)
 
     The ``block`` string may carry extra props or NBT — ``facing`` and
     ``half`` are merged in by the part (appended or overridden in the
@@ -103,7 +104,7 @@ def stairs_run(
         rel_target = (tx - sx, ty - sy, tz - sz)
     geo = _part.stairs_run(
         direction=direction, length=length, block=block, width=width,
-        target=rel_target,
+        target=rel_target, seed=getattr(build, "_seed", None),
     )
     build.place(geo, at=start)
     return _at_absolute(geo, start)
@@ -121,7 +122,8 @@ def pillar(build, base: tuple[int, int, int], height: int, block: str) -> Geomet
 
     Returns the placed :class:`Geometry` (absolute coordinates).
     """
-    geo = _part.pillar(height=height, block=block)
+    geo = _part.pillar(height=height, block=block,
+                       seed=getattr(build, "_seed", None))
     build.place(geo, at=base)
     return _at_absolute(geo, base)
 
@@ -149,6 +151,7 @@ def railing(
 
     Returns the placed :class:`Geometry` (absolute coordinates).
     """
-    geo = _part.railing(start=start, end=end, block=block)
+    geo = _part.railing(start=start, end=end, block=block,
+                        seed=getattr(build, "_seed", None))
     build.place(geo, at=(0, 0, 0))
     return _at_absolute(geo, (0, 0, 0))

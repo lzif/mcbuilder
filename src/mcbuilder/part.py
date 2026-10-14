@@ -25,10 +25,14 @@ Direction vocabulary: ``direction`` params use "north"/"south"/"east"/
 
 from __future__ import annotations
 
+import math
+
+from mcbuilder.blocks import resolve_material
 from mcbuilder.errors import McbuilderError
 from mcbuilder.geometry import Geometry
 
-__all__ = ["box", "pillar", "railing", "stairs_run"]
+__all__ = ["box", "cone", "cylinder", "line", "pillar", "railing",
+           "resolve_material", "sphere", "stairs_run"]
 
 # Horizontal step per direction: +X = east, +Z = south.
 _DIRECTIONS: dict[str, tuple[int, int]] = {
@@ -87,12 +91,19 @@ def _check_direction(direction: str, what: str) -> str:
     return dir_key
 
 
-def box(*, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str) -> Geometry:
+def box(*, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str,
+        seed=None) -> Geometry:
     """Relative-coordinate box between corners ``c1`` and ``c2`` (inclusive).
 
     The block string is placed verbatim — no axis/facing guessing. The
     corners are relative to the geometry origin; ``BUILD.place(geo, at=…)``
     offsets them into the world.
+
+    ``block`` also accepts a material spec (weighted palette or
+    ``(x, y, z) -> str`` callable); see
+    :func:`mcbuilder.blocks.resolve_material`. ``seed`` salts the
+    coordinate hash for palette picks (``None`` = deterministic but
+    fixed).
     """
     try:
         (x1, y1, z1), (x2, y2, z2) = tuple(c1), tuple(c2)  # type: ignore[misc]
@@ -102,24 +113,28 @@ def box(*, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str) -> Ge
         if isinstance(v, bool) or not isinstance(v, int):
             raise McbuilderError(f"box: corner coordinates must be ints, got {v!r}")
     geo = Geometry()
+    plain = isinstance(block, str)
     for x in range(min(x1, x2), max(x1, x2) + 1):
         for y in range(min(y1, y2), max(y1, y2) + 1):
             for z in range(min(z1, z2), max(z1, z2) + 1):
-                geo.set(x, y, z, block)
+                geo.set(x, y, z, block if plain
+                        else resolve_material(block, x, y, z, seed))
     return geo
 
 
-def pillar(*, height: int, block: str) -> Geometry:
+def pillar(*, height: int, block: str, seed=None) -> Geometry:
     """Vertical column of ``height`` blocks from the origin up.
 
     The ``block`` string is placed verbatim at every level — no props are
-    added or altered.
+    added or altered. Accepts a material spec; see :func:`box`.
     """
     if isinstance(height, bool) or not isinstance(height, int) or height < 1:
         raise McbuilderError(f"pillar: height must be an int >= 1, got {height!r}")
     geo = Geometry()
+    plain = isinstance(block, str)
     for i in range(height):
-        geo.set(0, i, 0, block)
+        geo.set(0, i, 0, block if plain
+                else resolve_material(block, 0, i, 0, seed))
     return geo
 
 
@@ -164,6 +179,7 @@ def stairs_run(
     block: str,
     width: int = 1,
     target: tuple[int, int, int] | None = None,
+    seed=None,
 ) -> Geometry:
     """Straight staircase ascending towards ``direction``, relative coords.
 
@@ -192,6 +208,10 @@ def stairs_run(
     ``width > 1`` widens the run along the horizontal axis perpendicular
     to ``direction``, toward the positive side from the origin; the top
     step's base cell (w=0) is the one that lands on ``target``.
+
+    ``block`` accepts a material spec (resolved per cell); ``seed`` salts
+    the coordinate hash. The computed ``facing``/``half`` props are merged
+    into whatever each cell resolves to.
     """
     dir_key = _check_direction(direction, "stairs_run")
     if length is not None and target is not None:
@@ -211,22 +231,30 @@ def stairs_run(
         raise McbuilderError(f"stairs_run: width must be an int >= 1, got {width!r}")
     dx, dz = _DIRECTIONS[dir_key]
     facing = dir_key
-    step_block = _merge_props(block, {"facing": facing, "half": "bottom"})
     px, pz = (0, 1) if dx != 0 else (1, 0)
     geo = Geometry()
+    plain = isinstance(block, str)
     for i in range(length):
         for w in range(width):
-            geo.set(i * dx + w * px, i, i * dz + w * pz, step_block)
+            x, y, z = i * dx + w * px, i, i * dz + w * pz
+            cell_block = (block if plain
+                          else resolve_material(block, x, y, z, seed))
+            geo.set(x, y, z, _merge_props(
+                cell_block, {"facing": facing, "half": "bottom"}))
     return geo
 
 
-def railing(*, start: tuple[int, int, int], end: tuple[int, int, int], block: str) -> Geometry:
+def railing(*, start: tuple[int, int, int], end: tuple[int, int, int],
+            block: str, seed=None) -> Geometry:
     """Straight horizontal run of blocks, relative coords.
 
     Must be axis-aligned (x or z constant, y constant) else a
     ``McbuilderError`` is raised. Typically used with fence blocks; the
-    game resolves fence/wall connections at paste time, so previews show
-    unconnected posts.
+    game resolves fence/wall connections at paste time, and the faithful
+    preview tier infers the same connections at render time (finding 7),
+    so previews show connected rails.
+
+    ``block`` accepts a material spec; ``seed`` salts the coordinate hash.
     """
     try:
         x1, y1, z1 = tuple(start)
@@ -252,6 +280,179 @@ def railing(*, start: tuple[int, int, int], end: tuple[int, int, int], block: st
     sx = 0 if x1 == x2 else (1 if x2 > x1 else -1)
     sz = 0 if z1 == z2 else (1 if z2 > z1 else -1)
     geo = Geometry()
+    plain = isinstance(block, str)
     for i in range(dist + 1):
-        geo.set(x1 + i * sx, y1, z1 + i * sz, block)
+        x, z = x1 + i * sx, z1 + i * sz
+        geo.set(x, y1, z, block if plain
+                else resolve_material(block, x, y1, z, seed))
+    return geo
+
+
+# ---------------------------------------------------------------------------
+# curved / vector primitives (finding 6)
+# ---------------------------------------------------------------------------
+
+def _check_int(name: str, value, minimum: int = 1) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise McbuilderError(
+            f"{name} must be an int >= {minimum}, got {value!r}")
+    return value
+
+
+def _check_point(name: str, p) -> tuple[int, int, int]:
+    try:
+        x, y, z = tuple(p)
+    except (TypeError, ValueError):
+        raise McbuilderError(f"{name} must be 3 ints, got {p!r}")
+    for v in (x, y, z):
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise McbuilderError(f"{name} coordinates must be ints, got {p!r}")
+    return x, y, z
+
+
+def cylinder(*, center: tuple[int, int, int], radius: int, height: int,
+             block: str, hollow: bool = False, seed=None) -> Geometry:
+    """Vertical cylinder (relative coords): ``height`` levels up from ``center``.
+
+    Cells satisfy ``(x-cx)² + (z-cz)² <= radius²`` per level. ``hollow``
+    keeps only the 1-thick shell (``(radius-1)² < d²``). ``block`` accepts
+    a material spec; ``seed`` salts the coordinate hash.
+    """
+    cx, cy, cz = _check_point("cylinder: center", center)
+    radius = _check_int("cylinder: radius", radius)
+    height = _check_int("cylinder: height", height)
+    geo = Geometry()
+    plain = isinstance(block, str)
+    r2, inner2 = radius * radius, (radius - 1) * (radius - 1)
+    for y in range(cy, cy + height):
+        for x in range(cx - radius, cx + radius + 1):
+            for z in range(cz - radius, cz + radius + 1):
+                d2 = (x - cx) ** 2 + (z - cz) ** 2
+                if d2 > r2 or (hollow and d2 <= inner2):
+                    continue
+                geo.set(x, y, z, block if plain
+                        else resolve_material(block, x, y, z, seed))
+    return geo
+
+
+def sphere(*, center: tuple[int, int, int], radius: int, block: str,
+           hollow: bool = False, dome: bool = False, thickness: int = 1,
+           seed=None) -> Geometry:
+    """Sphere (relative coords) of ``radius`` around ``center``.
+
+    Cells satisfy ``dx² + dy² + dz² <= radius²``. ``dome`` keeps only the
+    upper hemisphere (``y >= cy``). ``hollow`` keeps a shell
+    ``thickness`` thick (``(radius-thickness)² < d²``). ``block`` accepts
+    a material spec; ``seed`` salts the coordinate hash.
+    """
+    cx, cy, cz = _check_point("sphere: center", center)
+    radius = _check_int("sphere: radius", radius)
+    thickness = _check_int("sphere: thickness", thickness)
+    geo = Geometry()
+    plain = isinstance(block, str)
+    r2 = radius * radius
+    inner = max(0, radius - thickness)
+    inner2 = inner * inner
+    for x in range(cx - radius, cx + radius + 1):
+        for y in range(cy - radius, cy + radius + 1):
+            if dome and y < cy:
+                continue
+            for z in range(cz - radius, cz + radius + 1):
+                d2 = (x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2
+                if d2 > r2 or (hollow and d2 <= inner2):
+                    continue
+                geo.set(x, y, z, block if plain
+                        else resolve_material(block, x, y, z, seed))
+    return geo
+
+
+def cone(*, center: tuple[int, int, int], radius: int, height: int,
+         block: str, hollow: bool = False, seed=None) -> Geometry:
+    """Vertical cone (relative coords): base disc of ``radius`` at ``center``.
+
+    Level ``i`` (0-based from the base) has radius
+    ``radius * (height - i) / height``, so the cone tapers to a tip at
+    ``center.y + height - 1``. ``hollow`` keeps the 1-thick shell (the tip
+    cell is always kept — a hollow single-cell ring would vanish).
+    ``block`` accepts a material spec; ``seed`` salts the coordinate hash.
+    """
+    cx, cy, cz = _check_point("cone: center", center)
+    radius = _check_int("cone: radius", radius)
+    height = _check_int("cone: height", height)
+    geo = Geometry()
+    plain = isinstance(block, str)
+    for i in range(height):
+        y = cy + i
+        r = radius * (height - i) / height
+        r2 = r * r
+        inner2 = max(0.0, r - 1) ** 2
+        ri = int(math.ceil(r))
+        for x in range(cx - ri, cx + ri + 1):
+            for z in range(cz - ri, cz + ri + 1):
+                d2 = (x - cx) ** 2 + (z - cz) ** 2
+                if d2 > r2:
+                    continue
+                if hollow and d2 > inner2:
+                    pass  # shell cell
+                elif hollow and not (r < 1 and d2 == 0):
+                    continue  # interior (but keep a sub-1 tip cell)
+                geo.set(x, y, z, block if plain
+                        else resolve_material(block, x, y, z, seed))
+    return geo
+
+
+def _round_half_up(v: float) -> int:
+    return math.floor(v + 0.5)
+
+
+def _supercover_line(p1: tuple[int, int, int],
+                     p2: tuple[int, int, int]) -> list[tuple[int, int, int]]:
+    """6-connected (face-connected) voxelization of the segment p1→p2.
+
+    Samples the segment at ``max(|dx|,|dy|,|dz|)+1`` points and bridges
+    any multi-axis jump one axis at a time, so consecutive cells always
+    share a face — naive integer stepping leaves diagonal-only floating
+    voxels at steep diagonals (the crystal-tip bug from the probe).
+    """
+    x1, y1, z1 = p1
+    x2, y2, z2 = p2
+    dx, dy, dz = x2 - x1, y2 - y1, z2 - z1
+    n = max(abs(dx), abs(dy), abs(dz))
+    pts = [(_round_half_up(x1 + dx * i / n) if n else x1,
+            _round_half_up(y1 + dy * i / n) if n else y1,
+            _round_half_up(z1 + dz * i / n) if n else z1)
+           for i in range(n + 1)]
+    out: list[tuple[int, int, int]] = []
+    for (ax, ay, az), (bx, by, bz) in zip(pts, pts[1:]):
+        if not out or out[-1] != (ax, ay, az):
+            out.append((ax, ay, az))
+        x, y, z = ax, ay, az
+        while (x, y, z) != (bx, by, bz):
+            if x != bx:
+                x += 1 if bx > x else -1
+            elif y != by:
+                y += 1 if by > y else -1
+            else:
+                z += 1 if bz > z else -1
+            out.append((x, y, z))
+    if not out:
+        out.append(pts[0])
+    return out
+
+
+def line(*, p1: tuple[int, int, int], p2: tuple[int, int, int],
+         block: str, seed=None) -> Geometry:
+    """Straight 3D line from ``p1`` to ``p2`` (relative coords, inclusive).
+
+    6-connected: consecutive cells always share a face (no diagonal-only
+    floaters). ``block`` accepts a material spec; ``seed`` salts the
+    coordinate hash.
+    """
+    a = _check_point("line: p1", p1)
+    b = _check_point("line: p2", p2)
+    geo = Geometry()
+    plain = isinstance(block, str)
+    for x, y, z in _supercover_line(a, b):
+        geo.set(x, y, z, block if plain
+                else resolve_material(block, x, y, z, seed))
     return geo

@@ -50,7 +50,7 @@ def _registry(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _assets_fetch(monkeypatch):
-    def fake_fetch(version, cache_dir):
+    def fake_fetch(version, cache_dir, force=False):
         p = Path(cache_dir) / version
         p.mkdir(parents=True, exist_ok=True)
         return p
@@ -441,7 +441,7 @@ def test_assets_fetch(tmp_path, capsys):
 
 
 def test_assets_fetch_failure_is_clean_error(tmp_path, capsys, monkeypatch):
-    def boom(version, cache_dir):
+    def boom(version, cache_dir, force=False):
         raise AssetError("network down")
 
     monkeypatch.setattr("mcbuilder.assets.fetch", boom)

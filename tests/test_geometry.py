@@ -229,3 +229,89 @@ def test_build_render_tier_validation():
     b.set(0, 0, 0, "minecraft:stone")
     with pytest.raises(BuildError, match="tier"):
         b.render("/tmp/nope", views=["top"], tier="sideways")
+
+
+# ------------------------------------------------- finding 5: transforms
+
+
+def _geo_two_stairs():
+    from mcbuilder.geometry import Geometry
+
+    g = Geometry()
+    g.set(1, 0, 0, "minecraft:oak_stairs[facing=east,half=bottom]")
+    g.set(2, 0, 0, "minecraft:oak_stairs[facing=east,half=bottom]")
+    return g
+
+
+def test_geometry_shift_returns_new():
+    g = _geo_two_stairs()
+    s = g.shift(10, -1, 5)
+    assert (s.cells()[0][:3]) == (11, -1, 5)
+    assert g.cells()[0][:3] == (1, 0, 0)  # original untouched
+
+
+def test_geometry_rotate_positions_and_blockstates():
+    g = _geo_two_stairs()
+    r = g.rotate("CLOCKWISE_90")
+    cells = sorted(r.cells())
+    # (1,0,0) -> (0,0,1); (2,0,0) -> (0,0,2); facing east -> south.
+    assert cells[0][:3] == (0, 0, 1)
+    assert cells[1][:3] == (0, 0, 2)
+    assert all(
+        c[3] == "minecraft:oak_stairs[facing=south,half=bottom]" for c in cells
+    ), cells
+    assert len(g.cells()) == 2  # original untouched
+
+
+def test_geometry_rotate_about_anchor():
+    from mcbuilder.geometry import Geometry
+
+    g = Geometry()
+    g.set(1, 0, 0, "minecraft:stone")
+    r = g.rotate("CLOCKWISE_90", anchor=(1, 0, 0))
+    assert r.cells()[0][:3] == (1, 0, 0)  # anchor cell is fixed
+    r2 = g.rotate("CLOCKWISE_180", anchor=(1, 0, 1))
+    assert r2.cells()[0][:3] == (1, 0, 2), r2.cells()
+
+
+def test_geometry_rotate_rejects_bad_rotation():
+    from mcbuilder.errors import McbuilderError
+
+    with pytest.raises(McbuilderError, match="invalid rotation"):
+        _geo_two_stairs().rotate("UPSIDE_DOWN")
+
+
+def test_geometry_mirror_positions_and_blockstates():
+    g = _geo_two_stairs()
+    m = g.mirror("x")
+    cells = sorted(m.cells())
+    assert cells[0][:3] == (-2, 0, 0)
+    assert cells[1][:3] == (-1, 0, 0)
+    assert all(
+        c[3] == "minecraft:oak_stairs[facing=west,half=bottom]" for c in cells
+    ), cells
+    with pytest.raises(TypeError, match="axis must be"):
+        g.mirror("y")
+
+
+def test_geometry_carve_removes_box():
+    from mcbuilder.geometry import Geometry
+
+    g = Geometry()
+    for x in range(3):
+        g.set(x, 0, 0, "minecraft:stone")
+    c = g.carve((1, 0, 0), (2, 0, 0))
+    assert sorted(x for x, _y, _z, _b in c.cells()) == [0]
+    assert len(g.cells()) == 3  # original untouched
+
+
+def test_build_place_rotation_stamps_rotated():
+    import mcbuilder as mb
+
+    build = mb.Build(seed=3)
+    geo = _geo_two_stairs()
+    with build:
+        build.place(geo, at=(10, 0, 0), rotation="CLOCKWISE_90")
+    assert build.get(10, 0, 1) == "minecraft:oak_stairs[facing=south,half=bottom]"
+    assert build.get(10, 0, 2) == "minecraft:oak_stairs[facing=south,half=bottom]"
+    assert build.get(11, 0, 0) is None

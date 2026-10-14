@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 import zipfile
@@ -38,9 +39,13 @@ __all__ = ["fetch"]
 MC_DATA_RAW = "https://raw.githubusercontent.com/PrismarineJS/minecraft-data/master"
 PISTON_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 
-# Egress proxy for this environment (no auth). Users elsewhere can override
-# via their own HTTPS_PROXY/HTTP_PROXY — setdefault never clobbers theirs.
+# Egress proxy for the authoring sandbox (no auth). It is only used when
+# the hostname actually resolves here — on a normal workstation or VPS
+# (where ``hatch-egress-proxy`` does not exist) no proxy env is set and
+# standard direct connections work out of the box. A user-configured
+# HTTPS_PROXY/HTTP_PROXY always wins (setdefault never clobbers it).
 _PROXY = "http://hatch-egress-proxy:3130"
+_PROXY_HOST, _PROXY_PORT = "hatch-egress-proxy", 3130
 
 # Only these subtrees are extracted from the client JAR.
 _CLIENT_PREFIXES = (
@@ -49,12 +54,37 @@ _CLIENT_PREFIXES = (
     "assets/minecraft/blockstates/",
     "assets/minecraft/textures/entity/",
 )
-# NOTE (2026-10-10): fetch is idempotent — it returns early when
-# blockstates/ is already populated, so caches created BEFORE a prefix
-# was added here will NOT gain the new textures until the cache dir is
-# deleted and re-fetched. The renderers degrade gracefully when entity
-# textures are absent (wooden-box chest / magenta fallback / flat
-# fast-tier colors), so this only affects fidelity, not correctness.
+def _client_cache_complete(client_dir: Path) -> bool:
+    """True iff every extracted-asset subtree is present and non-empty.
+
+    The early-return guard used to check only ``blockstates/`` — caches
+    created before a prefix was added to ``_CLIENT_PREFIXES`` (e.g.
+    ``textures/entity/``) then silently lacked the new assets forever.
+    Every prefix is checked now, so a stale cache re-fetches.
+    """
+    for prefix in _CLIENT_PREFIXES:
+        d = client_dir / prefix
+        if not (d.is_dir() and any(d.iterdir())):
+            return False
+    return True
+
+
+def _maybe_configure_proxy() -> None:
+    """Default to the sandbox egress proxy, but only where it exists.
+
+    On machines where ``hatch-egress-proxy`` does not resolve (any normal
+    workstation/VPS), the proxy env vars are left untouched so direct
+    connections work. Never overrides an explicitly configured proxy.
+    The DNS probe is best-effort: any failure means "no sandbox proxy".
+    """
+    if "HTTPS_PROXY" in os.environ or "HTTP_PROXY" in os.environ:
+        return
+    try:
+        socket.getaddrinfo(_PROXY_HOST, _PROXY_PORT)
+    except OSError:
+        return
+    os.environ.setdefault("HTTPS_PROXY", _PROXY)
+    os.environ.setdefault("HTTP_PROXY", _PROXY)
 
 
 def _http_get(url: str, timeout: int = 120) -> tuple[int, bytes]:
@@ -63,8 +93,7 @@ def _http_get(url: str, timeout: int = 120) -> tuple[int, bytes]:
     Returns ``(status_code, body)``. Raises ``AssetError`` on connection
     failures. Tests monkeypatch this function — no real network is needed.
     """
-    os.environ.setdefault("HTTPS_PROXY", _PROXY)
-    os.environ.setdefault("HTTP_PROXY", _PROXY)
+    _maybe_configure_proxy()
     req = urllib.request.Request(url, headers={"User-Agent": "mcbuilder/0.1.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -143,9 +172,9 @@ def _fallback_layout(version: str) -> str:
     return layout
 
 
-def _fetch_registry(version: str, dest: Path) -> None:
+def _fetch_registry(version: str, dest: Path, *, force: bool = False) -> None:
     target = dest / "minecraft-data.json"
-    if target.is_file():
+    if target.is_file() and not force:
         return  # idempotent
     layout = f"pc/{version}"
     status, body = _http_get(f"{MC_DATA_RAW}/data/{layout}/blocks.json")
@@ -181,10 +210,9 @@ def _safe_extract(zf: zipfile.ZipFile, members: list[str], dest: Path) -> None:
     zf.extractall(dest, members)
 
 
-def _fetch_client(version: str, dest: Path) -> None:
+def _fetch_client(version: str, dest: Path, *, force: bool = False) -> None:
     client_dir = dest / "client"
-    blockstates_dir = client_dir / "assets" / "minecraft" / "blockstates"
-    if blockstates_dir.is_dir() and any(blockstates_dir.iterdir()):
+    if not force and _client_cache_complete(client_dir):
         return  # idempotent
 
     status, body = _http_get(PISTON_MANIFEST)
@@ -256,17 +284,18 @@ def _fetch_client(version: str, dest: Path) -> None:
         )
 
 
-def fetch(version: str, cache_dir: Path) -> Path:
+def fetch(version: str, cache_dir: Path, *, force: bool = False) -> Path:
     """Download assets for ``version`` into ``<cache_dir>/<version>/``.
 
     Writes ``minecraft-data.json`` (normalized block registry),
     ``version.json`` (client jar metadata incl. the authoritative
     DataVersion), and ``client/`` (vanilla textures, block models,
     blockstates extracted from the client JAR). Skips anything already
-    present. Returns the version directory. Raises ``AssetError`` on failure.
+    present unless ``force=True`` (re-downloads everything). Returns the
+    version directory. Raises ``AssetError`` on failure.
     """
     dest = Path(cache_dir) / version
     dest.mkdir(parents=True, exist_ok=True)
-    _fetch_registry(version, dest)
-    _fetch_client(version, dest)
+    _fetch_registry(version, dest, force=force)
+    _fetch_client(version, dest, force=force)
     return dest

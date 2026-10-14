@@ -21,6 +21,9 @@ values are well-typed is the validator's job (a different component).
 from __future__ import annotations
 
 import difflib
+import hashlib
+
+from mcbuilder.errors import McbuilderError
 
 
 def parse(block: str) -> tuple[str, dict[str, str], str | None]:
@@ -249,3 +252,77 @@ def _split_top_level(s: str) -> list[str]:
         i += 1
     parts.append("".join(cur))
     return parts
+
+
+# ---------------------------------------------------------------------------
+# material specs (finding 6)
+# ---------------------------------------------------------------------------
+# A material spec is ``str | Sequence[str | tuple[str, float]] |
+# Callable[[int, int, int], str]``:
+# - ``str``: one block, placed verbatim (the historical behavior).
+# - sequence: weighted palette — bare strings weigh 1.0, ``(block, weight)``
+#   pairs weigh ``weight``. The pick is a stable coordinate hash of
+#   ``(seed, x, y, z)``: the same cell always resolves the same way no
+#   matter the call order (unlike a shared RNG stream).
+# - callable: ``f(x, y, z) -> str``, called per cell; the result is
+#   canonicalized (``ValueError`` on malformed strings, like ``set``).
+
+
+def _coord_pick(seed, entries: list[tuple[str, float]], x: int, y: int,
+                z: int) -> str:
+    """Deterministic weighted pick from ``entries`` for cell ``(x, y, z)``."""
+    total = sum(w for _, w in entries)
+    h = int(hashlib.sha256(
+        f"{seed}\x00{x},{y},{z}".encode("utf-8")).hexdigest(), 16)
+    r = (h % 1_000_000) / 1_000_000 * total
+    acc = 0.0
+    for block, w in entries:
+        acc += w
+        if r < acc:
+            return block
+    return entries[-1][0]  # float-rounding guard
+
+
+def resolve_material(spec, x: int, y: int, z: int, seed=None) -> str:
+    """Resolve a material spec to a canonical block string for one cell.
+
+    ``seed`` salts the coordinate hash (``Build`` passes its own seed;
+    pure ``mb.part.*`` factories take a ``seed`` kwarg, defaulting to
+    ``None`` — deterministic either way, just fixed across seeds).
+    """
+    if isinstance(spec, str):
+        return canonicalize(spec)
+    if callable(spec):
+        return canonicalize(spec(x, y, z))
+    try:
+        items = list(spec)
+    except TypeError:
+        raise McbuilderError(
+            f"invalid material spec {spec!r}: expected a block string, "
+            "a sequence of block strings / (block, weight) pairs, or a "
+            "callable (x, y, z) -> str"
+        )
+    entries: list[tuple[str, float]] = []
+    for e in items:
+        if isinstance(e, str):
+            entries.append((canonicalize(e), 1.0))
+        elif (isinstance(e, (tuple, list)) and len(e) == 2
+                and isinstance(e[0], str)):
+            try:
+                w = float(e[1])
+            except (TypeError, ValueError):
+                raise McbuilderError(
+                    f"invalid palette weight {e[1]!r} for {e[0]!r}")
+            if w < 0:
+                raise McbuilderError(
+                    f"negative palette weight {w} for {e[0]!r}")
+            entries.append((canonicalize(e[0]), w))
+        else:
+            raise McbuilderError(
+                f"invalid palette entry {e!r}: expected a block string or "
+                "a (block, weight) pair")
+    if not entries:
+        raise McbuilderError("material palette is empty")
+    if sum(w for _, w in entries) <= 0:
+        raise McbuilderError("material palette weights sum to zero")
+    return _coord_pick(seed, entries, x, y, z)

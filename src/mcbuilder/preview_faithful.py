@@ -208,6 +208,22 @@ def _apply_element_rotation(p, origin, axis, angle_deg):
     return (rx + ox, ry + oy, rz + oz)
 
 
+def _apply_rescale(p, origin, axis):
+    """Vanilla ``rescale``: for 45° element rotations, expand the element
+    by √2 along the axes perpendicular to the rotation axis, around
+    ``origin`` — so the rotated square cross-section still spans the
+    original footprint (without it, ``cross`` models render ~29% narrow).
+    Applied to from/to corners BEFORE the element rotation."""
+    s = math.sqrt(2)
+    o = [c / 16.0 for c in origin]
+    ax = {"x": 0, "y": 1, "z": 2}[axis]
+    q = list(p)
+    for i in range(3):
+        if i != ax:
+            q[i] = o[i] + (q[i] - o[i]) * s
+    return tuple(q)
+
+
 # ---------------------------------------------------------------------------
 # asset loading
 # ---------------------------------------------------------------------------
@@ -260,11 +276,12 @@ def _load_texture_image(root: Path, rel: str, cache: dict):
 
 def _resolve_model_elements_and_textures(model_ref: str, root: Path,
                                         tex_cache: dict):
-    """Return (elements, images) or (None, None).
+    """Return (elements, images, ambient_occlusion) or (None, None, True).
 
     Walks the parent chain (cycle-safe, depth 8): textures merge with
     child overriding parent; elements come from the nearest chain entry
-    that defines them (vanilla inheritance — not merged).
+    that defines them (vanilla inheritance — not merged), and
+    ``ambientocclusion`` is read from that same entry (default True).
     """
     chain = []
     seen = set()
@@ -283,14 +300,16 @@ def _resolve_model_elements_and_textures(model_ref: str, root: Path,
             break
         ref = parent
     if not chain:
-        return None, None
+        return None, None, True
     elements = None
+    ambient_occlusion = True
     for model in chain:
         if model.get("elements"):
             elements = model["elements"]
+            ambient_occlusion = model.get("ambientocclusion", True)
             break
     if not elements:
-        return None, None
+        return None, None, True
     textures: dict[str, str] = {}
     for model in reversed(chain):
         textures.update(model.get("textures", {}))
@@ -315,7 +334,7 @@ def _resolve_model_elements_and_textures(model_ref: str, root: Path,
             continue
         images[var] = _load_texture_image(
             root, target.split(":", 1)[-1], tex_cache)
-    return elements, images
+    return elements, images, ambient_occlusion
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +529,112 @@ def _infer_wall_props(block: str, x: int, y: int, z: int, arr, palette,
 
 
 # ---------------------------------------------------------------------------
+# fence / pane / iron-bars connection inference (finding 7)
+# ---------------------------------------------------------------------------
+# Render-time only (like walls): the NBT is untouched. Vanilla rules
+# (v0 approximations documented below):
+# - fences connect to any *_fence, any *_fence_gate (gate facing ignored,
+#   same approximation as walls), or a full solid face. (Vanilla
+#   FenceBlock connects to any FenceBlock instance.)
+# - glass panes / iron bars connect to any *_glass_pane,
+#   minecraft:iron_bars, any *_wall, or a full solid face.
+# The solid-face test reuses the cell-level AO occlusion classification
+# (the same documented v0 proxy the walls use). Inferred props are
+# boolean "true"/"false" (unlike walls' low/tall/false domain).
+
+def _is_horiz_connector_block(name: str) -> bool:
+    """True iff `name` is a fence / glass pane / iron bars.
+
+    Name-based (unlike the data-driven wall gate): the three families
+    have unambiguous suffixes, and a value-domain gate would misfire on
+    redstone_wire / tripwire (boolean north/south/east/west domain, but
+    different connection rules).
+    """
+    short = name.split(":", 1)[-1]
+    is_pane = short == "glass_pane" or short.endswith("_glass_pane")
+    return (short.endswith("_fence") or is_pane
+            or name == "minecraft:iron_bars")
+
+
+def _connector_connects_to(arr, palette, nx: int, ny: int, nz: int,
+                           is_fence: bool, assets_root, tex_cache,
+                           occ_memo: dict) -> bool:
+    """v0 connect predicate for one horizontal neighbor of a fence/pane."""
+    if not (0 <= nx < arr.shape[0] and 0 <= ny < arr.shape[1]
+            and 0 <= nz < arr.shape[2]):
+        return False
+    nidx = int(arr[nx, ny, nz])
+    if nidx < 0 or nidx >= len(palette):
+        return False
+    nblock = palette[nidx]
+    if nblock == "minecraft:air":
+        return False
+    nname, _ = _fast._split_blockstate(nblock)
+    nshort = nname.split(":", 1)[-1]
+    n_is_pane = nshort == "glass_pane" or nshort.endswith("_glass_pane")
+    if is_fence:
+        if nshort.endswith("_fence"):
+            return True
+        if nshort.endswith("_fence_gate"):
+            return True  # v0: gate facing ignored (as for walls)
+    else:
+        if n_is_pane or nname == "minecraft:iron_bars":
+            return True
+        if _is_wall_block(nname, assets_root):
+            return True
+    hit = occ_memo.get(nidx)
+    if hit is None:
+        hit = _block_occludes_ao(nblock, assets_root, tex_cache)
+        occ_memo[nidx] = hit
+    return hit
+
+
+def _build_connector_connect(arr, palette, assets_root, tex_cache):
+    """Pass 1: per fence/pane/bars cell ``{dir: bool}``.
+
+    Built once per :func:`render` from the static grid; pass 2
+    (:func:`_infer_connector_props`) only reads it, so the inference is
+    deterministic with no fixpoint (same two-pass shape as the walls).
+    """
+    connector_connect: dict[tuple[int, int, int], dict[str, bool]] = {}
+    occ_memo: dict[int, bool] = {}
+    for idx, block in enumerate(palette):
+        name, _ = _fast._split_blockstate(block)
+        if not _is_horiz_connector_block(name):
+            continue
+        is_fence = name.split(":", 1)[-1].endswith("_fence")
+        for cell in np.argwhere(arr == idx):
+            x, y, z = (int(v) for v in cell)
+            entry: dict[str, bool] = {}
+            for d in _WALL_DIRS:
+                dx, dy, dz = _FACE_NORMALS[d]
+                entry[d] = _connector_connects_to(
+                    arr, palette, x + dx, y + dy, z + dz, is_fence,
+                    assets_root, tex_cache, occ_memo)
+            connector_connect[(x, y, z)] = entry
+    return connector_connect
+
+
+def _infer_connector_props(block: str, x: int, y: int, z: int,
+                           connector_connect) -> dict[str, str]:
+    """Pass 2: infer missing fence/pane/bars props for one cell.
+
+    Only fills keys absent from the canonical string, so precedence is
+    explicit > inferred > ``_DEFAULT_PROPS`` (partial explicit works).
+    """
+    _, explicit = _fast._split_blockstate(block)
+    entry = connector_connect.get((x, y, z)) or {}
+    inferred: dict[str, str] = {}
+    for d in _WALL_DIRS:
+        if d in explicit:
+            continue
+        inferred[d] = "true" if entry.get(d, False) else "false"
+    if "waterlogged" not in explicit:
+        inferred["waterlogged"] = "false"
+    return inferred
+
+
+# ---------------------------------------------------------------------------
 # smooth lighting: occlusion classification + per-vertex AO sampling
 # ---------------------------------------------------------------------------
 
@@ -578,7 +703,7 @@ def _block_occludes_ao(canonical: str, assets_root, tex_cache) -> bool:
         covered = np.zeros((16, 16, 16), dtype=bool)
         face_imgs = []
         for model_ref, _x, _y, _uvlock in apps:
-            elements, images = _resolve_model_elements_and_textures(
+            elements, images, _ao = _resolve_model_elements_and_textures(
                 model_ref, assets_root, tex_cache)
             if not elements:
                 return True
@@ -602,6 +727,54 @@ def _block_occludes_ao(canonical: str, assets_root, tex_cache) -> bool:
         # Corrupt element: the render degrades the whole block to the
         # fallback cube → occluding, matching the render.
         return True
+
+
+_SAME_TRANSLUCENT_BLOCKS = frozenset({
+    "minecraft:glass", "minecraft:water", "minecraft:ice",
+    "minecraft:slime_block", "minecraft:honey_block",
+})
+
+
+def _quad_culled_by_neighbor(cull, x, y, z, arr, palette, name,
+                             occ_padded) -> bool:
+    """Finding 1: True iff this quad's face is hidden by its neighbor.
+
+    Only faces WITH a cullface are culled (vanilla rule). A face is
+    hidden when the neighbor in the cull direction occludes (``occ_padded``)
+    or is the same translucent block (glass/water/ice stacking).
+    ``occ_padded`` is padded by 1, so out-of-bounds neighbors read the
+    (empty) padding — no bounds check needed there.
+    """
+    if cull is None:
+        return False
+    # cull is a snapped axis float triple (e.g. (0.0, 1.0, 0.0)) — int()
+    # it for array indexing.
+    nx, ny, nz = (int(x + cull[0]), int(y + cull[1]), int(z + cull[2]))
+    if occ_padded[nx + 1, ny + 1, nz + 1]:
+        return True
+    return _is_same_translucent_neighbor(arr, palette, name, nx, ny, nz)
+
+
+def _is_same_translucent_neighbor(arr, palette, name, nx, ny, nz) -> bool:
+    """True iff the neighbor cell holds the same translucent block kind.
+
+    Vanilla HalfTransparentBlock rule: adjacent faces between two of the
+    same translucent block (glass/glass, water/water, ice/ice, stained
+    glass of the same color...) are not rendered. ``name`` is the current
+    block's plain name; returns False when the current block isn't one of
+    the translucent kinds.
+    """
+    if name not in _SAME_TRANSLUCENT_BLOCKS and not name.endswith(
+            "_stained_glass"):
+        return False
+    if not (0 <= nx < arr.shape[0] and 0 <= ny < arr.shape[1]
+            and 0 <= nz < arr.shape[2]):
+        return False
+    nidx = int(arr[nx, ny, nz])
+    if nidx < 0 or nidx >= len(palette):
+        return False
+    nname, _ = _fast._split_blockstate(palette[nidx])
+    return nname == name
 
 
 def _quad_ao_levels(v_locals, normal, cell, occ_padded):
@@ -697,13 +870,15 @@ def _model_applications(block_name: str, props: dict, root: Path):
     if not bs:
         return []
     # Fill missing props from defaults so partial canonical blockstates
-    # (e.g. stairs without ``shape``) still match a variant.
+    # (e.g. stairs without ``shape``) still match multipart ``when``
+    # clauses. Variants use the explicit/default split instead (see
+    # preview._match_variant): defaults score but never reject.
     full_props = dict(_DEFAULT_PROPS)
     full_props.update(props)
     apps = []
     variants = bs.get("variants")
     if variants:
-        var = _fast._match_variant(variants, full_props)
+        var = _fast._match_variant(variants, props, _DEFAULT_PROPS)
         if var and var.get("model"):
             apps.append((var["model"], int(var.get("x", 0)),
                          int(var.get("y", 0)), bool(var.get("uvlock", False))))
@@ -726,12 +901,22 @@ def _model_applications(block_name: str, props: dict, root: Path):
 # quad construction
 # ---------------------------------------------------------------------------
 
-# A resolved quad: (points, normal, texture_image).
+# A resolved quad: (points, normal, texture_image, cull, flat).
 # points: 4 (x, y, z) in block-local 0–1 coords, in UV order
 #   [(u0,v0), (u0,v1), (u1,v1), (u1,v0)].
-# normal: world-space outward normal (axis-snapped).
-# texture_image: cropped to the face UV rect, face-rotation applied,
-#   shaded for the world normal. Ready to warp.
+# normal: world-space outward normal — the TRUE float normal (used for
+#   back-face culling); snap it with _snap_normal wherever an axis index
+#   is required (shading lookup, AO sampling, neighbor-cull direction).
+# texture_image: cropped to the face UV rect, face-rotation and
+#   mirrored-UV flips applied, shaded for the world normal (unless flat).
+#   Ready to warp.
+# cull: the face's "cullface" direction (snapped world-space), or None
+#   when the face specifies no cullface — only faces WITH cullface are
+#   neighbor-culled (vanilla rule); full-cube stand-ins (fallback, fluid)
+#   default to their outward normal.
+# flat: True when the element sets "shade": false or the model sets
+#   "ambientocclusion": false — skip directional shading AND per-vertex
+#   AO for this quad (vanilla emissive/cross-sprite rule).
 
 def _snap_normal(v):
     """Snap a near-axis normal to its dominant axis (for UV lookup)."""
@@ -825,8 +1010,9 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
         return None
     quads = []
     for model_ref, x_deg, y_deg, uvlock in apps:
-        elements, images = _resolve_model_elements_and_textures(
-            model_ref, root, tex_cache)
+        elements, images, ambient_occlusion = \
+            _resolve_model_elements_and_textures(
+                model_ref, root, tex_cache)
         if not elements:
             return None
         for el in elements:
@@ -838,6 +1024,11 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                 # fallback cube rather than aborting the render.
                 return None
             el_rot = el.get("rotation")
+            # Flat lighting (finding 3): element "shade": false or model
+            # "ambientocclusion": false → no directional shading and no
+            # AO for this element's faces (vanilla emissive/cross rule).
+            flat = (el.get("shade") is False
+                    or ambient_occlusion is False)
             for face_name, face in el.get("faces", {}).items():
                 if face_name not in _FACE_NORMALS:
                     continue
@@ -846,6 +1037,12 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                 def _xform(p):
                     q = p
                     if el_rot:
+                        if el_rot.get("rescale"):
+                            # 45° elements (cross, chains): widen by √2
+                            # first, or they render ~29% narrow.
+                            q = _apply_rescale(
+                                q, el_rot.get("origin", [8, 8, 8]),
+                                el_rot.get("axis", "y"))
                         q = _apply_element_rotation(
                             q, el_rot.get("origin", [8, 8, 8]),
                             el_rot.get("axis", "y"),
@@ -864,22 +1061,51 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                         el_rot.get("origin", [8, 8, 8]),
                         el_rot.get("axis", "y"), el_rot.get("angle", 0))
                     local_n = (n[0] - 0.5, n[1] - 0.5, n[2] - 0.5)
-                world_n = _snap_normal(
-                    _apply_model_rotation_dir(local_n, x_deg, y_deg))
+                # True float normal (finding 3): back-face culling tests
+                # THIS; _snap_normal is used only where an axis index is
+                # required (shading lookup, AO sampling, cull direction).
+                world_float = _apply_model_rotation_dir(
+                    local_n, x_deg, y_deg)
+                world_n = _snap_normal(world_float)
+                # Neighbor-cull direction (finding 1): the face's
+                # "cullface", rotated through the same transforms as the
+                # normal. Faces without cullface (cross blades, entity
+                # quads) are never neighbor-culled — the vanilla rule.
+                cull = None
+                cf = face.get("cullface")
+                if cf in _FACE_NORMALS:
+                    cull_local = _FACE_NORMALS[cf]
+                    if el_rot:
+                        cn = _apply_element_rotation(
+                            (0.5 + cull_local[0], 0.5 + cull_local[1],
+                             0.5 + cull_local[2]),
+                            el_rot.get("origin", [8, 8, 8]),
+                            el_rot.get("axis", "y"), el_rot.get("angle", 0))
+                        cull_local = (cn[0] - 0.5, cn[1] - 0.5, cn[2] - 0.5)
+                    cull = _snap_normal(_apply_model_rotation_dir(
+                        cull_local, x_deg, y_deg))
                 # Texture for this face.
                 tex_var = (face.get("texture") or "").lstrip("#")
                 img = images.get(tex_var)
                 uv = face.get("uv", [0, 0, 16, 16])
-                u0, v0, u1, v1 = (min(uv[0], uv[2]), min(uv[1], uv[3]),
-                                  max(uv[0], uv[2]), max(uv[1], uv[3]))
                 if img is None:
                     # Per-face graceful degradation (flat color, like the
                     # fast tier) — the block still renders.
                     fallback_blocks.add(block_name)
                     img = Image.new("RGB", (16, 16), fallback_color)
                     u0, v0, u1, v1 = 0, 0, 16, 16
+                    flip_h = flip_v = False
                     has_real_texture = False
                 else:
+                    # Mirrored UVs (e.g. template_lantern's [14,1,11,3]):
+                    # crop the un-mirrored rect, then flip the crop —
+                    # min/max sorting would clobber the mirror.
+                    u0, v0, u1, v1 = uv[0], uv[1], uv[2], uv[3]
+                    flip_h, flip_v = u0 > u1, v0 > v1
+                    if flip_h:
+                        u0, u1 = u1, u0
+                    if flip_v:
+                        v0, v1 = v1, v0
                     has_real_texture = True
                 tw, th = img.size
                 # UVs are in 0–16 texture space; scale to pixels.
@@ -888,6 +1114,10 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                                  int(round(u1 * sx)), int(round(v1 * sy))))
                 if crop.size[0] < 1 or crop.size[1] < 1:
                     continue
+                if flip_h:
+                    crop = crop.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                if flip_v:
+                    crop = crop.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
                 crop = _face_uv_rotation_crop(
                     crop, int(face.get("rotation", 0)))
                 # Biome tint (plains default): multiply the tint into the
@@ -928,14 +1158,18 @@ def _resolve_block_quads(block_name: str, props: dict, root: Path,
                         # (u1,v0),(u1,v1)].
                         ordered = [ordered[1], ordered[0],
                                    ordered[3], ordered[2]]
-                shade = _SHADES.get(world_n, 0.75)
-                quads.append((ordered, world_n,
-                              _shade_image(crop, shade)))
+                shade = 1.0 if flat else _SHADES.get(world_n, 0.75)
+                quads.append((ordered, world_float,
+                              _shade_image(crop, shade), cull, flat))
     return quads
 
 
 def _fallback_cube_quads(fallback_color):
-    """Labeled-cube fallback: 6 magenta quads (label added by the caller)."""
+    """Labeled-cube fallback: 6 magenta quads (label added by the caller).
+
+    Full-cube stand-in: every face carries its outward normal as the
+    cull direction (vanilla default for full-cube blocks).
+    """
     img = Image.new("RGB", (16, 16), fallback_color)
     quads = []
     f, t = (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
@@ -943,7 +1177,7 @@ def _fallback_cube_quads(fallback_color):
         corners = _face_base_corners(face_name, f, t)
         ordered = _order_corners_uv(corners, face_name)
         n = _FACE_NORMALS[face_name]
-        quads.append((ordered, n, _shade_image(img, _SHADES[n])))
+        quads.append((ordered, n, _shade_image(img, _SHADES[n]), n, False))
     return quads
 
 
@@ -968,7 +1202,8 @@ def _fluid_cube_quads(rgba, top_height: float = 1.0):
     ``top_height`` lowers only the up face's top corners (still fluids sit
     at 8/9). Side faces span the full 0..1: vanilla clips them
     per-neighbor, but the per-palette quad cache has no neighbor context —
-    documented approximation.
+    documented approximation. Full-cube stand-in: outward normals double
+    as cull directions.
     """
     r, g, b, a = rgba
     quads = []
@@ -984,7 +1219,7 @@ def _fluid_cube_quads(rgba, top_height: float = 1.0):
             (min(255, int(r * factor)), min(255, int(g * factor)),
              min(255, int(b * factor)), a),
         )
-        quads.append((ordered, n, img))
+        quads.append((ordered, n, img, n, False))
     return quads
 
 
@@ -1130,7 +1365,10 @@ def _finalize_entity_quads(quads, degrees, continuous=False):
 
     90° steps use _rot_y/_rot_y_dir; arbitrary angles use
     _rot_y_degrees with _snap_normal'd normals (shade 0.75 fallback for
-    non-axis normals — same as diagonal sign boards today).
+    non-axis normals — same as diagonal sign boards today). Entity quads
+    carry cull=None / flat=False: vanilla block entities don't
+    neighbor-cull (no cullface in BER) and always shade for their world
+    normal.
     """
     out = []
     for pts, n, crop in quads:
@@ -1140,7 +1378,8 @@ def _finalize_entity_quads(quads, degrees, continuous=False):
         else:
             pts2 = [_rot_y(p, degrees) for p in pts]
             n2 = _snap_normal(_rot_y_dir(n, degrees))
-        out.append((pts2, n2, _shade_image(crop, _SHADES.get(n2, 0.75))))
+        out.append((pts2, n2, _shade_image(crop, _SHADES.get(n2, 0.75)),
+                    None, False))
     return out
 
 
@@ -1510,7 +1749,7 @@ def _draw_debug_badge(img: Image.Image) -> None:
 
 def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
                  assets_root, fallback_blocks, presentation, title,
-                 occ_padded, wall_connect, wall_quad_cache):
+                 occ_padded, wall_connect, wall_quad_cache, connector_connect):
     d, r, u = _fast._camera(view)
     (x0, x1), (y0, y1), (z0, z1) = crop
     ss = SUPERSAMPLE if presentation else 1
@@ -1595,6 +1834,26 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
                                          fallback_blocks)
                 wall_quad_cache[eff] = wq
             (block_quads, _is_fallback) = wq
+        elif _is_horiz_connector_block(name):
+            # Position-dependent like walls: infer connections per cell.
+            # Shares wall_quad_cache (keyed by effective blockstate string —
+            # quads are block-local, so same props -> same quads anywhere).
+            inferred = _infer_connector_props(
+                block, x, y, z, connector_connect)
+            if inferred:
+                _, explicit = _fast._split_blockstate(block)
+                merged = dict(inferred)
+                merged.update(explicit)  # explicit > inferred
+                eff = (name + "[" + ",".join(
+                    f"{k}={v}" for k, v in sorted(merged.items())) + "]")
+            else:
+                eff = block
+            cq = wall_quad_cache.get(eff)
+            if cq is None:
+                cq = resolve_block_quads(eff, assets_root, tex_cache,
+                                         fallback_blocks)
+                wall_quad_cache[eff] = cq
+            (block_quads, _is_fallback) = cq
         else:
             cached = quad_cache.get(idx)
             if cached is None:
@@ -1602,19 +1861,25 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
                                              fallback_blocks)
                 quad_cache[idx] = cached
             (block_quads, _is_fallback) = cached
-        for pts, normal, tex in block_quads:
+        for pts, normal, tex, cull, flat in block_quads:
+            # Back-face culling against the TRUE float normal (finding 3)
+            # — culling on the snapped normal over-culls faces whose
+            # exact normal points slightly away from the view ray.
             if sum(n * dd for n, dd in zip(normal, d)) >= -1e-9:
                 continue  # back-face culling
+            if _quad_culled_by_neighbor(cull, x, y, z, arr, palette,
+                                         name, occ_padded):
+                continue
             wpts = [(px + x, py + y, pz + z) for px, py, pz in pts]
             depth = sum(p[i] * d[i] for p in wpts for i in range(3)) / 4.0
             quads.append((depth, x, y, z, seq, wpts, normal, tex,
-                          _is_fallback, block))
+                          _is_fallback, block, flat))
             seq += 1
 
     quads.sort(key=lambda t: (-t[0], t[1], t[2], t[3], t[4]))
     # Screen-space centroids of fallback blocks, for debug-mode labels.
     fallback_labels: dict[str, list] = {}
-    for _, x, y, z, _, wpts, normal, tex, is_fb, block in quads:
+    for _, x, y, z, _, wpts, normal, tex, is_fb, block, flat in quads:
         proj_pts = _fast._project(np.array(wpts), r, u)
         tw, th = tex.size
         # UV order [(u0,v0), (u0,v1), (u1,v1), (u1,v0)] ↔ texture
@@ -1626,12 +1891,18 @@ def _render_view(arr, palette, crop, view, quad_cache, tex_cache,
         # v_local = vertex minus the cell's array coords (the sampler's
         # [0, 1] space). All level-3 → fast path (ao=None, pixel-identical
         # to pre-AO); otherwise multiply _AO_BRIGHTNESS at draw time.
+        # Flat quads ("shade": false / "ambientocclusion": false) skip AO
+        # entirely (finding 3); the sampler needs the snapped normal.
         v_locals = np.asarray(wpts, dtype=float) - (x, y, z)
-        levels = _quad_ao_levels(v_locals, normal, (x, y, z), occ_padded)
-        if bool((levels == 3).all()):
+        if flat:
             ao = None
         else:
-            ao = [_AO_BRIGHTNESS[int(lv)] for lv in levels]
+            levels = _quad_ao_levels(v_locals, _snap_normal(normal),
+                                     (x, y, z), occ_padded)
+            if bool((levels == 3).all()):
+                ao = None
+            else:
+                ao = [_AO_BRIGHTNESS[int(lv)] for lv in levels]
         _draw_textured_quad(canvas, pairs, tex, ao)
         if is_fb and not presentation:
             sx = sum(p[0] for p in pairs) / 4
@@ -1692,6 +1963,10 @@ def render(grid, out_dir, views: list[View], assets_dir,
     # Wall connection inference (pass 1): once per render, from the static
     # grid. Pass 2 (_infer_wall_props) runs per wall cell in _render_view.
     wall_connect = _build_wall_connect(arr, palette, assets_root, tex_cache)
+    # Fence / pane / iron-bars connection inference (finding 7): same
+    # two-pass shape as the walls.
+    connector_connect = _build_connector_connect(
+        arr, palette, assets_root, tex_cache)
 
     # Pre-scan palette for per-type warnings (once per build, not per view).
     # Uses the full resolve path so a missing MODEL json (blockstate ok,
@@ -1700,10 +1975,12 @@ def render(grid, out_dir, views: list[View], assets_dir,
         for idx, block in enumerate(palette):
             if block in ("minecraft:air",):
                 continue
-            if _is_wall_block(_fast._split_blockstate(block)[0],
-                              assets_root):
-                # Walls resolve per-cell with inferred connections; the
-                # position-blind pre-scan would falsely flag them.
+            _bname = _fast._split_blockstate(block)[0]
+            if _is_wall_block(_bname, assets_root) or \
+                    _is_horiz_connector_block(_bname):
+                # Walls / fences / panes resolve per-cell with inferred
+                # connections; the position-blind pre-scan would falsely
+                # flag them.
                 continue
             _quads, is_fallback = resolve_block_quads(
                 block, assets_root, tex_cache, set())
@@ -1741,7 +2018,8 @@ def render(grid, out_dir, views: list[View], assets_dir,
             img = _render_view(arr, palette, crop, view, quad_cache,
                                tex_cache, assets_root, fallback_blocks,
                                presentation, title, occ_padded,
-                               wall_connect, wall_quad_cache)
+                               wall_connect, wall_quad_cache,
+                               connector_connect)
         path = out / f"{view.label}.png"
         img.save(path)
         paths.append(path)

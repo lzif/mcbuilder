@@ -29,9 +29,13 @@ from mcbuilder.views import parse_views
     ("minecraft:oak_trapdoor[facing=west,half=top,open=false]", "facing"),
     ("minecraft:oak_sign[rotation=4]", "rotation"),
     ("minecraft:white_banner[rotation=11]", "rotation"),
-    # Non-log/pillar axis blocks fall through to the labeled-cube fallback.
-    ("minecraft:iron_chain[axis=y]", "fallback"),
-    ("minecraft:basalt[axis=y]", "fallback"),
+    # Any axis-carrying block classifies as "axis" (finding 4) — chains
+    # and rods render as thin posts, logs/pillars/basalt as cube+band.
+    ("minecraft:iron_chain[axis=y]", "axis"),
+    ("minecraft:basalt[axis=y]", "axis"),
+    ("minecraft:deepslate[axis=z]", "axis"),
+    # ...except an invalid axis value, which stays a labeled fallback.
+    ("minecraft:oak_log[axis=q]", "fallback"),
     ("minecraft:stone_bricks", "cube"),
     ("minecraft:lantern[hanging=true,waterlogged=false]", "cube"),
     ("minecraft:sea_lantern", "cube"),
@@ -161,8 +165,8 @@ def test_rotation_arrow_direction_matches_plan_table():
 
 
 def test_fallback_mesh_is_labeled_magenta():
-    polys, label = pt.mesh_for_block("minecraft:iron_chain[axis=y]")
-    assert label == "iron_chain"
+    polys, label = pt.mesh_for_block("minecraft:oak_log[axis=q]")
+    assert label == "oak_log"
     assert len(polys) == 6
     colors = {p[2] for p in polys}
     assert colors == {pt._FALLBACK_COLOR}
@@ -191,7 +195,9 @@ def test_trusted_render_produces_pngs_and_counts_fallback(tmp_path):
     result = pt.render(b.grid, out, parse_views("iso;top"), None)
     assert [p.name for p in result] == ["iso.png", "top.png"]
     assert all(p.stat().st_size > 100 for p in result)
-    assert result.info["untrusted_blocks"] == {"minecraft:iron_chain": 1}
+    # iron_chain[axis=y] now renders as a thin axial post (finding 4), so
+    # nothing in this build is untrusted anymore.
+    assert result.info["untrusted_blocks"] == {}
     assert result.info["views"] == 2
 
 
@@ -228,3 +234,113 @@ def test_trusted_badge_present():
         img = Image.open(p).convert("RGB")
     # Badge rect near (10,10): dark green fill differs from the bg.
     assert img.getpixel((12, 12)) != pt._fast._BG
+
+
+# ------------------------------------------------- finding 4
+
+
+def test_open_trapdoor_stands_against_facing_opposite_wall():
+    # dark_oak_trapdoor[facing=west,half=bottom,open=true]: the panel must
+    # stand vertically against the EAST wall (x in [0.8125, 1]), not lie
+    # flat as a floor slab.
+    polys, _ = pt.mesh_for_block(
+        "minecraft:dark_oak_trapdoor[facing=west,half=bottom,open=true]")
+    xs = [px for pts, _, _ in polys for px, _, _ in pts]
+    ys = [py for pts, _, _ in polys for _, py, _ in pts]
+    # Panel hugs the east wall (x in [0.8125, 1]); the direction plate
+    # straddles its inward face, reaching 0.7625.
+    assert min(xs) >= 0.7625 - 1e-9, xs
+    assert max(xs) <= 1.0 + 1e-9, xs
+    assert max(ys) > 0.9, ys  # full height, not a 0.1875 slab
+
+
+def test_open_trapdoor_all_facings():
+    expected_x = {"north": (0.0, 1.0), "south": (0.0, 1.0),
+                  "east": (0.0, 0.2375), "west": (0.7625, 1.0)}
+    expected_z = {"north": (0.7625, 1.0), "south": (0.0, 0.2375),
+                  "east": (0.0, 1.0), "west": (0.0, 1.0)}
+    for facing in ("north", "south", "east", "west"):
+        polys, _ = pt.mesh_for_block(
+            f"minecraft:oak_trapdoor[facing={facing},half=bottom,open=true]")
+        xs = [px for pts, _, _ in polys for px, _, _ in pts]
+        zs = [pz for pts, _, _ in polys for _, _, pz in pts]
+        lo, hi = expected_x[facing]
+        assert min(xs) >= lo - 1e-9 and max(xs) <= hi + 1e-9, (facing, xs)
+        lo, hi = expected_z[facing]
+        assert min(zs) >= lo - 1e-9 and max(zs) <= hi + 1e-9, (facing, zs)
+
+
+def test_closed_trapdoor_still_horizontal():
+    polys, _ = pt.mesh_for_block(
+        "minecraft:oak_trapdoor[facing=north,half=bottom,open=false]")
+    ys = [py for pts, _, _ in polys for _, py, _ in pts]
+    assert max(ys) < 0.9  # thin horizontal panel + plate
+
+
+def test_chain_renders_as_thin_axial_post():
+    for axis, fixed in (("y", 1), ("x", 0), ("z", 2)):
+        polys, label = pt.mesh_for_block(f"minecraft:iron_chain[axis={axis}]")
+        assert label is None
+        assert len(polys) == 6, (axis, len(polys))  # one thin box
+        pts_all = [p for pts, _, _ in polys for p in pts]
+        # Thin along the two non-axis dimensions, full along the axis.
+        for i in range(3):
+            vals = [p[i] for p in pts_all]
+            if i == fixed:
+                assert min(vals) == 0.0 and max(vals) == 1.0, (axis, vals)
+            else:
+                assert min(vals) >= 0.375 - 1e-9
+                assert max(vals) <= 0.625 + 1e-9, (axis, vals)
+
+
+def test_rod_renders_as_thin_axial_post():
+    polys, _ = pt.mesh_for_block("minecraft:lightning_rod[facing=up]")
+    # lightning_rod has no axis prop -> "facing" kind, full cube + plate.
+    assert len(polys) == 12
+
+
+# finding 1: neighbor face culling (per-kind occlusion)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("block,expected", [
+    ("minecraft:stone_bricks", True),                    # cube
+    ("minecraft:oak_sign[rotation=4]", True),            # rotation
+    ("minecraft:oak_log[axis=q]", True),                 # fallback (cube)
+    ("minecraft:oak_slab[type=double]", True),           # double slab
+    ("minecraft:oak_log[axis=y]", True),                 # axis log: cube
+    ("minecraft:iron_chain[axis=y]", False),              # thin post
+    # lightning_rod classifies as "facing" and the tier renders facing
+    # blocks as full cubes + plate -> occludes (tier-consistent).
+    ("minecraft:lightning_rod[facing=up]", True),
+    ("minecraft:furnace[facing=north]", True),            # full facing
+    ("minecraft:oak_trapdoor[facing=west,half=top,open=false]",
+     False),                                            # trapdoor panel
+    ("minecraft:oak_stairs[facing=north,half=bottom]", False),
+    ("minecraft:oak_slab[type=bottom]", False),
+    ("minecraft:oak_fence", False),                      # post
+])
+def test_occludes_neighbor_kinds(block, expected):
+    from mcbuilder import preview as _fast
+    name, props = _fast._split_blockstate(block)
+    assert pt._occludes_neighbor(name, props, pt.classify(name, props)) \
+        is expected, block
+
+
+def test_trusted_tier_culls_buried_faces(monkeypatch, tmp_path):
+    """A solid 2x2x2 cube from straight above draws exactly the 4 top
+    faces — same occ_padded rule as the faithful tier, adapted to
+    per-kind occlusion."""
+    import numpy as np
+    drawn = []
+    orig_polygon = __import__("PIL.ImageDraw", fromlist=["ImageDraw"]).ImageDraw.polygon
+    def spy(self, xy, **kw):
+        drawn.append(xy)
+        return orig_polygon(self, xy, **kw)
+    monkeypatch.setattr("PIL.ImageDraw.ImageDraw.polygon", spy)
+    arr = np.ones((2, 2, 2), dtype=np.int32)
+    palette = ["minecraft:air", "minecraft:stone_bricks"]
+    class G:
+        def to_dense(self):
+            return arr, palette, {}
+    pt.render(G(), tmp_path, parse_views("top"))
+    assert len(drawn) == 4, len(drawn)

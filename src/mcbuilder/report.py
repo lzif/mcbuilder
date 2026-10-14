@@ -50,8 +50,14 @@ def build_report(*, errors: list[dict], warnings: list[dict],
                  dimensions: tuple[int, int, int] | None,
                  views: list[dict], run_dir: str,
                  artifacts: list[dict] | None = None,
-                 overwritten_placements: int = 0) -> dict:
-    """Assemble the report.json dict. Inputs are copied, never mutated."""
+                 overwritten_placements: int = 0,
+                 origin: tuple[int, int, int] | list[int] | None = None) -> dict:
+    """Assemble the report.json dict. Inputs are copied, never mutated.
+
+    ``origin`` is the world-space ``[minx, miny, minz]`` of the exported
+    .nbt's cell frame (the dense-array origin), so ``mcbuild diff`` can
+    translate .nbt offsets back to world coordinates before comparing.
+    """
     return {
         "errors": [dict(e) for e in errors],
         "warnings": [dict(w) for w in warnings],
@@ -61,6 +67,7 @@ def build_report(*, errors: list[dict], warnings: list[dict],
             if dimensions is not None
             else None
         ),
+        "origin": [int(v) for v in origin] if origin is not None else None,
         "views": [dict(v) for v in views],
         "artifacts": [dict(a) for a in artifacts] if artifacts else [],
         "overwritten_placements": overwritten_placements,

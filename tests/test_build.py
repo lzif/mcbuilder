@@ -671,3 +671,147 @@ def test_carve_single_cell():
     assert b.count("minecraft:stone") == 3
     assert b.get(0, 0, 0) is None
     assert b.get(1, 0, 1) == "minecraft:stone"
+
+
+# ------------------------------------------------- finding 6: materials
+
+
+def test_box_weighted_palette_is_deterministic_per_cell():
+    import mcbuilder as mb
+
+    spec = ["minecraft:stone", ("minecraft:mossy_cobblestone", 0.3)]
+    b1, b2 = mb.Build(seed=42), mb.Build(seed=42)
+    with b1:
+        b1.box((0, 0, 0), (4, 0, 4), spec)
+    with b2:
+        b2.box((0, 0, 0), (4, 0, 4), spec)
+    for x in range(5):
+        for z in range(5):
+            assert b1.get(x, 0, z) == b2.get(x, 0, z)
+    # ~30% secondary: some of each must appear on a 5x5 patch
+    got = {b1.get(x, 0, z) for x in range(5) for z in range(5)}
+    assert got == {"minecraft:stone", "minecraft:mossy_cobblestone"}, got
+
+
+def test_box_callable_material():
+    import mcbuilder as mb
+
+    b = mb.Build(seed=1)
+    with b:
+        b.box((0, 0, 0), (2, 0, 0),
+              lambda x, y, z: "minecraft:stone" if x % 2 == 0
+              else "minecraft:cobblestone")
+    assert b.get(0, 0, 0) == "minecraft:stone"
+    assert b.get(1, 0, 0) == "minecraft:cobblestone"
+    assert b.get(2, 0, 0) == "minecraft:stone"
+
+
+def test_box_plain_string_unchanged():
+    import mcbuilder as mb
+
+    b = mb.Build(seed=1)
+    with b:
+        b.box((0, 0, 0), (1, 1, 1), "minecraft:stone")
+    assert b.count("minecraft:stone") == 8
+
+
+def test_resolve_material_rejects_bad_specs():
+    from mcbuilder.blocks import resolve_material
+    from mcbuilder.errors import McbuilderError
+
+    with pytest.raises(McbuilderError, match="empty"):
+        resolve_material([], 0, 0, 0, seed=1)
+    with pytest.raises(McbuilderError, match="negative"):
+        resolve_material([("minecraft:stone", -1.0)], 0, 0, 0, seed=1)
+    with pytest.raises(McbuilderError, match="sum to zero"):
+        resolve_material([("minecraft:stone", 0.0)], 0, 0, 0, seed=1)
+    with pytest.raises(McbuilderError, match="invalid palette entry"):
+        resolve_material([123], 0, 0, 0, seed=1)
+    with pytest.raises(McbuilderError, match="invalid material spec"):
+        resolve_material(123, 0, 0, 0, seed=1)
+
+
+# ------------------------------------------------- finding 6: primitives
+
+
+def test_part_cylinder_cell_counts():
+    from mcbuilder import part
+
+    solid = part.cylinder(center=(0, 0, 0), radius=2, height=3,
+                         block="minecraft:stone")
+    # per level: d2<=4 -> 13 cells; 3 levels
+    assert len(solid) == 39, len(solid)
+    hollow = part.cylinder(center=(0, 0, 0), radius=2, height=3,
+                           block="minecraft:stone", hollow=True)
+    # per level: 1 < d2 <= 4 -> 8 cells
+    assert len(hollow) == 24, len(hollow)
+
+
+def test_part_sphere_and_dome():
+    from mcbuilder import part
+
+    s = part.sphere(center=(0, 0, 0), radius=2, block="minecraft:stone")
+    assert len(s) == 33, len(s)  # d2<=4: 1+6+12+8+6 = 33
+    d = part.sphere(center=(0, 5, 0), radius=2, block="minecraft:stone",
+                    dome=True)
+    assert all(y >= 5 for _x, y, _z, _b in d.cells())
+    assert len(d) == 23, len(d)  # upper hemisphere of the 33
+
+
+def test_part_cone_tapers():
+    from mcbuilder import part
+
+    c = part.cone(center=(0, 0, 0), radius=4, height=4,
+                  block="minecraft:stone")
+    by_y = {}
+    for x, y, z, _b in c.cells():
+        by_y.setdefault(y, []).append((x, z))
+    assert sorted(by_y) == [0, 1, 2, 3]
+    counts = [len(by_y[y]) for y in sorted(by_y)]
+    assert counts == sorted(counts, reverse=True), counts  # tapers upward
+    assert len(by_y[3]) < len(by_y[0])  # tip narrower than base
+    assert len(by_y[3]) == 5  # top level r=1.0: plus-shape
+
+
+def test_part_line_is_6_connected():
+    from mcbuilder import part
+
+    g = part.line(p1=(0, 0, 0), p2=(7, 3, 5), block="minecraft:stone")
+    pts = [(x, y, z) for x, y, z, _b in g.cells()]
+    assert pts[0] == (0, 0, 0) and pts[-1] == (7, 3, 5)
+    for a, b in zip(pts, pts[1:]):
+        assert sum(abs(p - q) for p, q in zip(a, b)) == 1, (a, b)
+
+
+def test_part_line_degenerate_single_cell():
+    from mcbuilder import part
+
+    g = part.line(p1=(2, 2, 2), p2=(2, 2, 2), block="minecraft:stone")
+    assert g.cells() == [(2, 2, 2, "minecraft:stone")]
+
+
+def test_build_primitives_place_and_return_absolute():
+    import mcbuilder as mb
+
+    b = mb.Build(seed=9)
+    with b:
+        g = b.cylinder((10, 0, 10), 2, 2, "minecraft:stone")
+    assert g.bounds() == ((8, 0, 8), (12, 1, 12)), g.bounds()
+    assert b.get(10, 0, 10) == "minecraft:stone"
+    with b:
+        b.sphere((0, 20, 0), 1, "minecraft:glass")
+    assert b.get(0, 20, 0) == "minecraft:glass"
+    assert b.get(0, 22, 0) is None
+    with b:
+        b.line((0, 30, 0), (3, 30, 0), "minecraft:oak_planks")
+    assert b.get(3, 30, 0) == "minecraft:oak_planks"
+
+
+def test_build_cylinder_rejects_bad_radius():
+    import mcbuilder as mb
+    from mcbuilder.errors import McbuilderError
+
+    b = mb.Build(seed=1)
+    with b:
+        with pytest.raises(McbuilderError, match="radius"):
+            b.cylinder((0, 0, 0), 0, 3, "minecraft:stone")

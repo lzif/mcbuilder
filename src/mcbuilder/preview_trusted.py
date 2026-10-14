@@ -9,10 +9,12 @@ v8 wrong-facing stair proved is load-bearing. This tier renders
   polygon-projected boxes — the cost driver of this tier, not oriented
   cubes;
 - slabs → half-height boxes (top/bottom/double);
-- logs/pillars (``axis``) → full cube + contrasting axis band;
+- logs/pillars/any ``axis`` block → full cube + contrasting axis band
+  (chains and ``*_rod`` → thin axial posts, their vanilla shape);
 - walls/fences → centered posts (connections resolve in-game);
+- trapdoors → thin panel per ``half`` when closed, vertical panel against
+  the facing-opposite wall when ``open=true``;
 - every other block carrying ``facing`` → cube + facing plate
-  (trapdoors render thin, per their ``half``);
 - sign/banner ``rotation`` → cube + rotation arrow on the top face;
 - any *other* directional block → labeled cube (magenta) **plus** one
   warning per block type (``untrusted_blocks`` in the result info) —
@@ -41,13 +43,23 @@ from mcbuilder.views import View
 
 __all__ = ["RenderResult", "render", "classify", "mesh_for_block"]
 
-# Substrings marking a block as a log/pillar for axis handling (PLAN §3:
-# axis boxes are scoped to "logs/pillars (axis)" — other axis blocks like
-# chains fall through to the labeled-cube fallback).
-_AXIS_LOG_HINTS = ("log", "wood", "stem", "hyphae", "pillar")
-
 #: Props that make a block directional.
 _DIRECTIONAL_PROPS = frozenset({"facing", "axis", "rotation"})
+
+#: Open-trapdoor geometry: facing -> (panel, plate). The 0.1875-thick
+#: panel stands vertically against the facing-OPPOSITE wall (vanilla:
+#: opening a trapdoor swings it onto the wall opposite its facing); the
+#: direction plate sits on the panel's inward face.
+_OPEN_TRAPDOOR = {
+    "north": ((0.0, 0.0, 0.8125, 1.0, 1.0, 1.0),
+              (0.30, 0.30, 0.7625, 0.70, 0.70, 0.8625)),
+    "south": ((0.0, 0.0, 0.0, 1.0, 1.0, 0.1875),
+              (0.30, 0.30, 0.1375, 0.70, 0.70, 0.2375)),
+    "east": ((0.0, 0.0, 0.0, 0.1875, 1.0, 1.0),
+             (0.1375, 0.30, 0.30, 0.2375, 0.70, 0.70)),
+    "west": ((0.8125, 0.0, 0.0, 1.0, 1.0, 1.0),
+             (0.7625, 0.30, 0.30, 0.8625, 0.70, 0.70)),
+}
 
 _PLATE_COLOR = (45, 45, 45)
 _ARROW_COLOR = (235, 235, 235)
@@ -80,7 +92,12 @@ def classify(name: str, props: dict[str, str]) -> str:
         return "stairs"
     if short.endswith("_slab"):
         return "slab"
-    if "axis" in props and any(h in short for h in _AXIS_LOG_HINTS):
+    if "axis" in props:
+        # Any axis-carrying block (logs, chains, rods, basalt, bone
+        # blocks, ...). An invalid axis value degrades to the labeled
+        # fallback instead of crashing the mesh builder.
+        if props.get("axis", "y") not in ("x", "y", "z"):
+            return "fallback"
         return "axis"
     if short.endswith("_fence") or short.endswith("_wall"):
         return "post"
@@ -235,28 +252,49 @@ def mesh_for_block(canonical: str) -> tuple[list, str | None]:
             (0.0, 0.0, 0.0, 1.0, 1.0, 1.0))
         polys.extend(_box_quads(box, base))
     elif kind == "axis":
-        polys.extend(_box_quads((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), base))
-        band_color = tuple(int(c * 0.55) for c in base)
         axis = props.get("axis", "y")
-        band = {
-            "x": (0.35, -0.03, -0.03, 0.65, 1.03, 1.03),
-            "y": (-0.03, 0.35, -0.03, 1.03, 0.65, 1.03),
-            "z": (-0.03, -0.03, 0.35, 1.03, 1.03, 0.65),
-        }[axis]
-        polys.extend(_box_quads(band, band_color))
+        short = name.split(":", 1)[-1]
+        if "chain" in short or short.endswith("_rod"):
+            # Chains and rods are thin axial posts in vanilla, not cubes.
+            thin = {
+                "x": (0.0, 0.375, 0.375, 1.0, 0.625, 0.625),
+                "y": (0.375, 0.0, 0.375, 0.625, 1.0, 0.625),
+                "z": (0.375, 0.375, 0.0, 0.625, 0.625, 1.0),
+            }[axis]
+            polys.extend(_box_quads(thin, base))
+        else:
+            polys.extend(_box_quads((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), base))
+            band_color = tuple(int(c * 0.55) for c in base)
+            band = {
+                "x": (0.35, -0.03, -0.03, 0.65, 1.03, 1.03),
+                "y": (-0.03, 0.35, -0.03, 1.03, 0.65, 1.03),
+                "z": (-0.03, -0.03, 0.35, 1.03, 1.03, 0.65),
+            }[axis]
+            polys.extend(_box_quads(band, band_color))
     elif kind == "post":
         polys.extend(_box_quads((0.375, 0.0, 0.375, 0.625, 1.0, 0.625), base))
     elif kind == "facing":
-        if "trapdoor" in name.split(":", 1)[-1]:
-            # Trapdoors are thin: render the panel per half + facing plate.
-            half = props.get("half", "bottom")
-            panel = (0.0, 0.0, 0.0, 1.0, 0.1875, 1.0) if half == "bottom" else (
-                (0.0, 0.8125, 0.0, 1.0, 1.0, 1.0))
+        short = name.split(":", 1)[-1]
+        if "trapdoor" in short and props.get("open") == "true":
+            # Open trapdoor: the 0.1875 panel stands vertically against
+            # the facing-opposite wall (vanilla open geometry), the
+            # direction plate on its inward face.
+            panel, plate = _OPEN_TRAPDOOR.get(
+                props.get("facing", "north"), _OPEN_TRAPDOOR["north"])
             polys.extend(_box_quads(panel, base))
+            polys.extend(_box_quads(plate, _PLATE_COLOR))
         else:
-            polys.extend(_box_quads((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), base))
-        polys.extend(_box_quads(_facing_plate(props.get("facing", "north")),
-                                _PLATE_COLOR))
+            if "trapdoor" in short:
+                # Closed trapdoor: thin horizontal panel per half.
+                half = props.get("half", "bottom")
+                tpanel = ((0.0, 0.0, 0.0, 1.0, 0.1875, 1.0)
+                          if half == "bottom" else
+                          (0.0, 0.8125, 0.0, 1.0, 1.0, 1.0))
+                polys.extend(_box_quads(tpanel, base))
+            else:
+                polys.extend(_box_quads((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), base))
+            polys.extend(_box_quads(_facing_plate(props.get("facing", "north")),
+                                    _PLATE_COLOR))
     elif kind == "rotation":
         polys.extend(_box_quads((0.0, 0.0, 0.0, 1.0, 1.0, 1.0), base))
         try:
@@ -276,6 +314,29 @@ def mesh_for_block(canonical: str) -> tuple[list, str | None]:
 # render
 # ---------------------------------------------------------------------------
 
+def _occludes_neighbor(name: str, props: dict, kind: str) -> bool:
+    """Whether this trusted-tier block fully occludes an adjacent face.
+
+    The trusted tier's ``occ_padded`` equivalent (finding 1): only full
+    opaque cubes occlude. ``cube`` / ``rotation`` / ``fallback`` render
+    as full cubes; double slabs fill the cell; axis logs render as full
+    cubes (chains/rods are thin posts); non-trapdoor ``facing`` blocks
+    are full cubes with a direction plate. Stairs, half-slabs, posts,
+    trapdoors, and chains never occlude — conservative: we miss a cull,
+    never cull a visible face.
+    """
+    short = name.split(":", 1)[-1]
+    if kind in ("cube", "rotation", "fallback"):
+        return True
+    if kind == "slab":
+        return props.get("type") == "double"
+    if kind == "axis":
+        return not ("chain" in short or short.endswith("_rod"))
+    if kind == "facing":
+        return "trapdoor" not in short
+    return False
+
+
 def _draw_trusted_badge(img: Image.Image) -> None:
     d = ImageDraw.Draw(img, "RGBA")
     font = ImageFont.load_default()
@@ -289,7 +350,14 @@ def _draw_trusted_badge(img: Image.Image) -> None:
     d.text((x, y), text, font=font, fill=(255, 255, 255, 255))
 
 
-def _render_view(arr, palette, crop, view, mesh_cache, labels) -> Image.Image:
+def _render_view(arr, palette, crop, view, mesh_cache, labels,
+                 occludes) -> Image.Image:
+    """Render one trusted-tier view.
+
+    ``occludes``: dict palette-idx → bool (does that block fully occlude
+    an adjacent face — finding 1). Faces whose neighbor in the face
+    normal direction occludes are dropped before projection/sorting.
+    """
     d, r, u = _fast._camera(view)
     (x0, x1), (y0, y1), (z0, z1) = crop
 
@@ -343,6 +411,18 @@ def _render_view(arr, palette, crop, view, mesh_cache, labels) -> Image.Image:
             # Back-face culling: draw only faces turned toward the camera.
             if sum(n * dd for n, dd in zip(normal, d)) >= -1e-9:
                 continue
+            # Neighbor-face culling (finding 1): drop the face when the
+            # neighbor cell in the face's outward direction fully occludes
+            # it (same occ_padded rule as the faithful tier, adapted to
+            # this tier's per-kind occlusion).
+            nx, ny, nz = (int(round(x + normal[0])),
+                          int(round(y + normal[1])),
+                          int(round(z + normal[2])))
+            if (0 <= nx < arr.shape[0] and 0 <= ny < arr.shape[1]
+                    and 0 <= nz < arr.shape[2]):
+                nidx = int(arr[nx, ny, nz])
+                if 0 <= nidx < len(palette) and occludes.get(nidx):
+                    continue
             depth = float(sum(p[i] * d[i] for p in pts for i in range(3)) / len(pts))
             polys.append((depth, x, y, z, seq, pts, normal, color))
             seq += 1
@@ -396,6 +476,7 @@ def render(grid, out_dir, views: list[View],
     mesh_cache: dict = {}
     untrusted: dict[str, int] = {}
     kinds: dict[int, str] = {}
+    occludes: dict[int, bool] = {}
     if crop is not None:
         # Classify each palette entry once; count fallback cells once per
         # build (not per view) for the PLAN §3 per-type warnings.
@@ -405,6 +486,9 @@ def render(grid, out_dir, views: list[View],
             name, props = _fast._split_blockstate(block)
             kind = classify(name, props)
             kinds[idx] = kind
+            # Neighbor-face culling map (finding 1): which palette entries
+            # fully occlude an adjacent face. View-independent.
+            occludes[idx] = _occludes_neighbor(name, props, kind)
             if kind == "fallback":
                 untrusted[name] = untrusted.get(name, 0) + int((arr == idx).sum())
     paths: list[Path] = []
@@ -416,7 +500,8 @@ def render(grid, out_dir, views: list[View],
             _fast._overlay_label_and_compass(img, view, r, u)
             _draw_trusted_badge(img)
         else:
-            img = _render_view(arr, palette, crop, view, mesh_cache, [])
+            img = _render_view(arr, palette, crop, view, mesh_cache, [],
+                               occludes)
         path = out / f"{view.label}.png"
         img.save(path)
         paths.append(path)
