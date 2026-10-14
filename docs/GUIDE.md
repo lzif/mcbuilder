@@ -111,7 +111,7 @@ with BUILD:
 - `seed` — the **sole** RNG source, exposed as `BUILD.rng()`. Same
   script + same seed ⇒ same grid. The CLI also pins `PYTHONHASHSEED`,
   and warns if your script imports raw `random` / `numpy.random`.
-- `views` — preview camera config (see §6). Pure config, no side effects.
+- `views` — preview camera config (see §7). Pure config, no side effects.
 - `max_dimensions` — grid bounds; exceeding them raises `GridBoundsError`.
 - Provenance — every palette entry records the `file:line` of the
   script call that placed it (first placement wins). Validation
@@ -319,7 +319,44 @@ floors, canopy, per-variant palettes — see
 [`examples/waystones/`](../examples/waystones/) (four 7×7×7 waystone
 variants authored as ~50-line scripts over a common factory module).
 
-## 5. Blockstate syntax and direction rules
+## 5. Design techniques — making builds look good
+
+A hut that passes `check` can still look "polosan" (plain). These are
+*techniques*, not templates: distilled from frame-by-frame studies of real
+builders (Gorillo, Noes Crafts, Dio Rods — full notes in
+[`docs/build-patterns.md`](build-patterns.md)), and they transfer to any
+archetype — house, underwater base, tower, whatever. Take the technique, not
+the house shape.
+
+**Material variation:** never a large flat single-material surface. Noise
+the base (~30% secondary mottled variant), band by section (different
+material per story/zone), two-tone the edges.
+
+**Skeleton first:** pillars and beams define the silhouette; walls fill
+between them. Mark the footprint before placing anything. Exposed joints are
+free detail — don't hide them.
+
+**Breaks and silhouette:** interrupt long surfaces with trim bands (slab
+strips, material changes). Break the top outline — dormers, chimneys,
+towers — and overhang past the walls.
+
+**Ground connection:** foundation wider than the footprint (or visible
+supports for raised builds). Sit the build *in* the terrain: patchy paths
+to the entrance, plants around the base. Never float.
+
+**Lighting rhythm:** warm point lights placed on the structure's rhythm (a
+lantern per pillar, candle rows along edges) — never a light-emitting block
+used as a wall material.
+
+**Detail and props:** shutters and window boxes with trailing greenery,
+barrels, ladders, crates — small functional-looking bits that sell the
+scale.
+
+**Anti-patterns:** flat single-texture surfaces, flat tops, glowstone walls,
+random dirt with no path logic, floating builds, copying a reference's
+*shape* instead of its *techniques*.
+
+## 6. Blockstate syntax and direction rules
 
 Block strings are canonical `minecraft:name[prop=val,...]{nbt}`:
 
@@ -382,7 +419,7 @@ n→e→s→w per 90° clockwise, `axis` swaps x/z on 90° turns, sign/banner
 friends are invariant. A design verified here pastes correctly at all
 four rotations.
 
-## 6. Views
+## 7. Views
 
 One grammar, semicolons only:
 
@@ -408,7 +445,7 @@ See [docs/VIEWS.md](VIEWS.md) — the six standard views
 (`az000/az090/az180/az270` at 25° elevation, `top`, `iso`) rendered
 from a sample hut, with one-line descriptions.
 
-## 7. The three preview tiers
+## 8. The three preview tiers
 
 `mcbuild run --preview` renders every resolved view in **three** tiers
 into the run dir. Pick the tier for the question you're asking:
@@ -444,7 +481,7 @@ compare against reference screenshots.
 Rule of thumb: iterate on **fast**, verify directions on **trusted**,
 sign off on **faithful**.
 
-## 8. CLI reference
+## 9. CLI reference
 
 ```bash
 mcbuild init [path] [--force]
@@ -527,7 +564,7 @@ Written to every run dir:
 | `overwritten_placements` | how many placements overwrote an earlier one (last-write-wins count) |
 | `run_dir` | the run directory itself |
 
-## 9. `.nbt` export → LostQoL pipeline
+## 10. `.nbt` export → LostQoL pipeline
 
 `mcbuild run` writes `<name>.nbt` next to `report.json`: a vanilla
 structure-block file (gzipped NBT with `DataVersion`, `size`,
@@ -570,7 +607,7 @@ into the `.nbt` **verbatim**. From `examples/waystones/common.py`:
 That is a plugin-side contract — mcbuilder's job ends at writing the
 string through untouched.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 **Stair rows show "gaps" / floating strips in the preview (faithful *and* trusted tiers).**
 This is real Minecraft geometry, not a renderer bug. A stair block is
@@ -602,7 +639,7 @@ error if you hand a `facing` to a part that computes it.
 **`railing: run must be axis-aligned`** — start/end must share y and
 have x or z constant.
 
-**Allowlist warning for `lostqol:waystone`** — expected (see §9). Any
+**Allowlist warning for `lostqol:waystone`** — expected (see §10). Any
 *other* allowlist warning means a non-vanilla block is flowing into
 your `.nbt`: make sure that's intentional.
 
@@ -625,7 +662,7 @@ Use the seeded `BUILD.rng()`.
 
 **My preview looks wrong.** Checklist, in order:
 1. `mcbuild check` — 0 errors? (Errors block export *and* previews.)
-2. Am I reading the right tier? (fast ≠ directions; see §7.)
+2. Am I reading the right tier? (fast ≠ directions; see §8.)
 3. `report.json` warnings — fallback textures / untrusted blocks?
 4. Blockstate strings — did I hand-write a `facing` that fights the
    helper's computed one? (`roof_gable`/`stairs_run` own their facing.)
@@ -633,7 +670,7 @@ Use the seeded `BUILD.rng()`.
    tier: if they disagree on an orientation, that's a renderer bug —
    report it with the script and the two PNGs.
 
-## 11. FAQ
+## 12. FAQ
 
 **Do I need the Minecraft client / a server to use this?**
 No. `mcbuild assets fetch` downloads everything in one step: the block
