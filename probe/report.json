@@ -1,0 +1,253 @@
+{
+  "errors": [],
+  "warnings": [
+    {
+      "message": "trusted preview: 8 `minecraft:iron_chain` rendered as magenta fallback cube \u2014 orientation not verified"
+    }
+  ],
+  "block_counts": {
+    "minecraft:amethyst_block": 336,
+    "minecraft:cobbled_deepslate": 275,
+    "minecraft:deepslate": 324,
+    "minecraft:tuff": 226,
+    "minecraft:stone": 392,
+    "minecraft:andesite": 267,
+    "minecraft:cobblestone": 128,
+    "minecraft:grass_block": 72,
+    "minecraft:moss_block": 167,
+    "minecraft:rooted_dirt": 36,
+    "minecraft:amethyst_cluster[facing=down]": 5,
+    "minecraft:cobbled_deepslate_wall": 9,
+    "minecraft:tuff_wall": 2,
+    "minecraft:iron_chain[axis=y]": 8,
+    "minecraft:soul_lantern[hanging=true]": 4,
+    "minecraft:sea_lantern": 4,
+    "minecraft:budding_amethyst": 13,
+    "minecraft:purple_stained_glass": 46,
+    "minecraft:magenta_stained_glass": 14,
+    "minecraft:amethyst_cluster[facing=up]": 14,
+    "minecraft:deepslate_bricks": 79,
+    "minecraft:spruce_planks": 71,
+    "minecraft:chiseled_stone_bricks": 47,
+    "minecraft:stone_bricks": 57,
+    "minecraft:cracked_stone_bricks": 19,
+    "minecraft:mossy_stone_bricks": 26,
+    "minecraft:polished_andesite": 21,
+    "minecraft:polished_deepslate": 57,
+    "minecraft:chiseled_deepslate": 10,
+    "minecraft:deepslate_tile_wall": 25,
+    "minecraft:lantern": 10,
+    "minecraft:deepslate_brick_stairs[facing=south,half=top]": 5,
+    "minecraft:deepslate_brick_stairs[facing=north,half=top]": 8,
+    "minecraft:deepslate_brick_stairs[facing=east,half=top]": 6,
+    "minecraft:deepslate_brick_stairs[facing=west,half=top]": 6,
+    "minecraft:bookshelf": 8,
+    "minecraft:lectern[facing=south]": 1,
+    "minecraft:cartography_table": 1,
+    "minecraft:barrel[facing=up]": 1,
+    "minecraft:ladder[facing=east]": 6,
+    "minecraft:spruce_slab[type=top]": 50,
+    "minecraft:deepslate_brick_slab[type=top]": 3,
+    "minecraft:deepslate_brick_wall": 13,
+    "minecraft:cut_copper_slab[type=bottom]": 1,
+    "minecraft:end_rod[facing=south]": 1,
+    "minecraft:deepslate_brick_stairs[facing=east,half=bottom]": 4,
+    "minecraft:weathered_cut_copper": 35,
+    "minecraft:oxidized_cut_copper": 81,
+    "minecraft:cut_copper": 21,
+    "minecraft:prismarine_bricks": 22,
+    "minecraft:waxed_copper_block": 18,
+    "minecraft:deepslate_tiles": 3,
+    "minecraft:cut_copper_stairs[facing=north,half=bottom]": 8,
+    "minecraft:copper_block": 5,
+    "minecraft:cut_copper_stairs[facing=south,half=top]": 7,
+    "minecraft:dark_oak_trapdoor[facing=west,half=bottom,open=true]": 3,
+    "minecraft:dark_oak_trapdoor[facing=east,half=bottom,open=true]": 3,
+    "minecraft:amethyst_cluster[facing=south]": 1,
+    "minecraft:end_rod[facing=north]": 1
+  },
+  "dimensions": {
+    "x": 35,
+    "y": 34,
+    "z": 23
+  },
+  "views": [
+    {
+      "file": "previews/iso.png",
+      "azimuth": 45.0,
+      "elevation": 35.0,
+      "label": "iso",
+      "directions_untrusted": true,
+      "directions_trusted": false
+    },
+    {
+      "file": "previews/az045_el025.png",
+      "azimuth": 45.0,
+      "elevation": 25.0,
+      "label": "az045_el025",
+      "directions_untrusted": true,
+      "directions_trusted": false
+    },
+    {
+      "file": "previews/az135_el025.png",
+      "azimuth": 135.0,
+      "elevation": 25.0,
+      "label": "az135_el025",
+      "directions_untrusted": true,
+      "directions_trusted": false
+    },
+    {
+      "file": "previews/az225_el025.png",
+      "azimuth": 225.0,
+      "elevation": 25.0,
+      "label": "az225_el025",
+      "directions_untrusted": true,
+      "directions_trusted": false
+    },
+    {
+      "file": "previews/az315_el025.png",
+      "azimuth": 315.0,
+      "elevation": 25.0,
+      "label": "az315_el025",
+      "directions_untrusted": true,
+      "directions_trusted": false
+    },
+    {
+      "file": "previews/az180_el015.png",
+      "azimuth": 180.0,
+      "elevation": 15.0,
+      "label": "az180_el015",
+      "directions_untrusted": true,
+      "directions_trusted": false
+    },
+    {
+      "file": "previews/top.png",
+      "azimuth": 0.0,
+      "elevation": 90.0,
+      "label": "top",
+      "directions_untrusted": true,
+      "directions_trusted": false
+    },
+    {
+      "file": "previews_trusted/iso.png",
+      "azimuth": 45.0,
+      "elevation": 35.0,
+      "label": "iso",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_trusted/az045_el025.png",
+      "azimuth": 45.0,
+      "elevation": 25.0,
+      "label": "az045_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_trusted/az135_el025.png",
+      "azimuth": 135.0,
+      "elevation": 25.0,
+      "label": "az135_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_trusted/az225_el025.png",
+      "azimuth": 225.0,
+      "elevation": 25.0,
+      "label": "az225_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_trusted/az315_el025.png",
+      "azimuth": 315.0,
+      "elevation": 25.0,
+      "label": "az315_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_trusted/az180_el015.png",
+      "azimuth": 180.0,
+      "elevation": 15.0,
+      "label": "az180_el015",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_trusted/top.png",
+      "azimuth": 0.0,
+      "elevation": 90.0,
+      "label": "top",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_faithful/iso.png",
+      "azimuth": 45.0,
+      "elevation": 35.0,
+      "label": "iso",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_faithful/az045_el025.png",
+      "azimuth": 45.0,
+      "elevation": 25.0,
+      "label": "az045_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_faithful/az135_el025.png",
+      "azimuth": 135.0,
+      "elevation": 25.0,
+      "label": "az135_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_faithful/az225_el025.png",
+      "azimuth": 225.0,
+      "elevation": 25.0,
+      "label": "az225_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_faithful/az315_el025.png",
+      "azimuth": 315.0,
+      "elevation": 25.0,
+      "label": "az315_el025",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_faithful/az180_el015.png",
+      "azimuth": 180.0,
+      "elevation": 15.0,
+      "label": "az180_el015",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    },
+    {
+      "file": "previews_faithful/top.png",
+      "azimuth": 0.0,
+      "elevation": 90.0,
+      "label": "top",
+      "directions_untrusted": false,
+      "directions_trusted": true
+    }
+  ],
+  "artifacts": [
+    {
+      "file": "crystal_observatory.nbt",
+      "format": "nbt",
+      "data_version": 4903
+    }
+  ],
+  "overwritten_placements": 326,
+  "run_dir": "probe/dist/run-003"
+}
