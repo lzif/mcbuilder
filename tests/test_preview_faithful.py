@@ -6,6 +6,7 @@ absent) that pins vanilla parity for stairs.
 """
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -114,7 +115,12 @@ def test_missing_assets_root_falls_back(tex_cache):
 # real-asset vanilla parity (skipped when the cache is absent)
 # ---------------------------------------------------------------------------
 
-_REAL_ROOT = Path("/home/hatch/.cache/mcbuilder/26.2/client/assets/minecraft")
+# Real 26.2 asset cache for vanilla-parity tests. ``MCBUILDER_TEST_ASSETS``
+# overrides it; the default is the user cache. Absent cache ⇒ tests skip,
+# never fail. (This used to hardcode the authoring sandbox user's path.)
+_REAL_ROOT = Path(os.environ.get(
+    "MCBUILDER_TEST_ASSETS",
+    Path.home() / ".cache/mcbuilder/26.2/client/assets/minecraft"))
 needs_real_assets = pytest.mark.skipif(
     not _REAL_ROOT.is_dir(), reason="no local 26.2 asset cache")
 
@@ -540,9 +546,9 @@ def test_fluid_quads_deterministic():
 # ---------------------------------------------------------------------------
 
 def _mean_rgb(tex):
-    d = list(tex.getdata())
-    n = len(d)
-    return tuple(sum(p[i] for p in d) // n for i in range(3))
+    d = np.asarray(tex.convert("RGB")).reshape(-1, 3)
+    n = d.shape[0]
+    return tuple(int(d[:, i].sum(dtype=np.int64)) // n for i in range(3))
 
 
 def _latch_quads(quads):
@@ -642,13 +648,14 @@ def test_chest_textures_per_variant():
         assert not fb, name
         assert len(quads) >= 15, (name, len(quads))
         # Overall mean color across the textured quads.
-        rs = gs = bs = n = 0
+        rs = gs = bs = 0
+        n = 0
         for _, _, tex, _cull, _flat in quads:
-            for p in tex.getdata():
-                rs += p[0]
-                gs += p[1]
-                bs += p[2]
-                n += 1
+            px = np.asarray(tex.convert("RGB")).reshape(-1, 3)
+            rs += int(px[:, 0].sum(dtype=np.int64))
+            gs += int(px[:, 1].sum(dtype=np.int64))
+            bs += int(px[:, 2].sum(dtype=np.int64))
+            n += px.shape[0]
         means[name] = (rs // n, gs // n, bs // n)
     # The variants resolve to genuinely different textures (normal vs
     # trapped differ in only 28/4096 texels — a subtle vanilla reddening
@@ -1474,12 +1481,11 @@ def test_cross_is_flat_lit():
     # The crop must not be shade-darkened: compare against the raw
     # texture brightness (tolerance for the crop region).
     tex = Image.open(_REAL_ROOT / "textures/block/poppy.png").convert("RGB")
-    raw_mean = sum(sum(p) for p in tex.getdata()) / (tex.size[0] *
-                                                    tex.size[1])
+    tex_px = np.asarray(tex).reshape(-1, 3)
+    raw_mean = float(tex_px.sum(dtype=np.int64)) / tex_px.shape[0]
     for _pts, _n, crop, _cull, _flat in quads:
-        got = crop.convert("RGB")
-        mean = sum(sum(p) for p in got.getdata()) / (got.size[0] *
-                                                     got.size[1])
+        got_px = np.asarray(crop.convert("RGB")).reshape(-1, 3)
+        mean = float(got_px.sum(dtype=np.int64)) / got_px.shape[0]
         assert mean == pytest.approx(raw_mean, rel=0.15), (mean, raw_mean)
 
 
@@ -1495,7 +1501,7 @@ def test_lantern_mirrored_uv_flipped():
     # the real texture (the lantern side has asymmetric detail).
     src_left = tex.crop((11, 1, 12, 3))
     src_right = tex.crop((13, 1, 14, 3))
-    assert list(src_left.getdata()) != list(src_right.getdata())
+    assert not np.array_equal(np.asarray(src_left), np.asarray(src_right))
     # A side quad's crop: its left column must match the SOURCE's right
     # column (mirrored), proving the flip was applied.
     side = [q for q in quads if q[2].size == (3, 2)]

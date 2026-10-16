@@ -1,7 +1,7 @@
 # CONSOLIDATED PHASE-1 PLAN — mcbuilder faithful-renderer accuracy gaps
 
-**Status:** Phase 1 complete. Plans only — no code written, no files modified, nothing committed.
-**Base:** `main` @ `ab39e88` (390 tests green). **Client assets:** `~/.cache/mcbuilder/26.2/`.
+**Status:** IMPLEMENTED & MERGED (2026-10-10) — all four gaps shipped on `main`: `acc/fluid-height` (`dcc73c5`), `acc/biome-tint` (`8d2d9e8`), `acc/block-entities` (`f3f95f2`), `acc/smooth-lighting` (`d0373ef`). This document is retained as the design rationale; the per-gap sections are historical plans, not pending work.
+**Base (at planning):** `main` @ `ab39e88` (390 tests green). **Client assets:** `~/.cache/mcbuilder/26.2/`.
 **Full per-gap detail:** `~/workspace/mcbuilder/plan-acc/gap{1,2,3,4}-*-v2.md` (gap3 is v1 — needed no revision).
 
 ## Global constraints (all gaps)

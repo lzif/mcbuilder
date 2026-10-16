@@ -1622,7 +1622,7 @@ def _draw_textured_quad(canvas: Image.Image, pts_uv, tex: Image.Image,
     _sy = [p[1] for p in pts_uv]
     _area2 = abs(sum(_sx[i] * _sy[(i + 1) % 4] - _sx[(i + 1) % 4] * _sy[i]
                      for i in range(4)))
-    if _area2 < 2.0:  # < 1 px² screen-space area
+    if _area2 < 2.0:  # degenerate: screen-space area < 2 px² — skip
         return
     # Affine texture->screen: screen = M @ tex + t. Solve from the 4
     # (cyclic) correspondences, then invert for screen->texture.

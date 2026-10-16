@@ -375,7 +375,7 @@ def test_render_discovers_assets_when_dir_not_given(tmp_path):
     assert len(paths) == 1
     img = Image.open(paths[0]).convert("RGB")
     # Grass green present, magenta fallback absent.
-    px = list(img.getdata())
+    px = np.asarray(img).reshape(-1, 3)
     assert any(g > 100 > r for r, g, _b in px), "no green texels rendered"
     assert not any(r > 180 and g < 100 and b > 180 for r, g, b in px), \
         "magenta fallback rendered despite cached assets"

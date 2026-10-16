@@ -453,9 +453,12 @@ class Build:
     ) -> Geometry:
         """Straight staircase ascending towards ``direction``.
 
-        Thin delegate to :func:`mcbuilder.parts.stairs_run` (see it for
-        the facing rule and the landing contract). Must be called inside
-        ``with BUILD:``.
+        Thin delegate to :func:`mcbuilder.parts.stairs_run`. Must be
+        called inside ``with BUILD:``.
+
+        Facing rule (computed by the part, never hand-guessed): each
+        step gets ``facing`` = the ascent direction and ``half=bottom``
+        — ascending north places ``facing=north``, tall back uphill.
 
         Give exactly one of ``length`` / ``target`` (``ValueError`` if
         both or neither). ``target`` is the absolute (x, y, z) the TOP

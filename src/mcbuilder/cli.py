@@ -72,23 +72,31 @@ def _load_script(path: Path):
         raise CliError(f"cannot load script: {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    # Let scripts import sibling helpers from their own directory.
+    # Let scripts import sibling helpers from their own directory — scoped
+    # to the exec below. Long-lived callers re-loading different scripts
+    # must not accumulate sys.path entries (same-named sibling helpers in
+    # different dirs would shadow each other on later loads).
     script_dir = str(path.parent.resolve())
-    if script_dir not in sys.path:
+    path_added = script_dir not in sys.path
+    if path_added:
         sys.path.insert(0, script_dir)
     try:
-        spec.loader.exec_module(module)
-    except CliError:
-        raise
-    except Exception as e:  # noqa: BLE001 - surfaced as a clean message below
-        loc = _script_error_location(e, path)
-        at = f" (at {loc})" if loc else ""
-        if isinstance(e, errors_mod.McbuilderError):
-            # DSL misuse: lead with the message, point at the script line.
-            raise CliError(f"{path.name}: {e}{at}") from None
-        raise CliError(
-            f"failed to import {path.name}: {type(e).__name__}: {e}{at}"
-        ) from None
+        try:
+            spec.loader.exec_module(module)
+        except CliError:
+            raise
+        except Exception as e:  # noqa: BLE001 - surfaced as a clean message below
+            loc = _script_error_location(e, path)
+            at = f" (at {loc})" if loc else ""
+            if isinstance(e, errors_mod.McbuilderError):
+                # DSL misuse: lead with the message, point at the script line.
+                raise CliError(f"{path.name}: {e}{at}") from None
+            raise CliError(
+                f"failed to import {path.name}: {type(e).__name__}: {e}{at}"
+            ) from None
+    finally:
+        if path_added:
+            sys.path.remove(script_dir)
     build_obj = getattr(module, "BUILD", None)
     if build_obj is None:
         raise CliError(
