@@ -144,6 +144,31 @@ def test_include_air_writes_unset_cells(tmp_path):
     assert voxels_mod.AIR in cells.values()
 
 
+def test_include_air_explicit_writes_only_carved_air(tmp_path):
+    """'explicit': carved air is written, unset bbox cells stay void.
+
+    The underwater-base case: the interior air pocket must displace ocean
+    water on paste, but the ocean around the build must stay untouched.
+    """
+    grid = _sample_grid()
+    out = tmp_path / "hut.nbt"
+    export_nbt_mod.write_structure_nbt(grid, out, data_version=4189,
+                                       include_air="explicit")
+    _root, _pal, cells = _read_back(out)
+    # 18 box cells (one of them carved air) + 1 stair; the 8 unset cells
+    # of the 3x3x3 bbox's top layer are NOT written
+    assert len(cells) == 19
+    assert cells[(0, 0, 0)] == voxels_mod.AIR
+    assert [p for p, b in cells.items() if b == voxels_mod.AIR] == [(0, 0, 0)]
+
+
+def test_include_air_rejects_unknown_mode(tmp_path):
+    with pytest.raises(export_nbt_mod.ExportError):
+        export_nbt_mod.write_structure_nbt(
+            _sample_grid(), tmp_path / "x.nbt", data_version=4189,
+            include_air="sometimes")
+
+
 # ---------------------------------------------------------------------------
 # DataVersion resolution
 # ---------------------------------------------------------------------------

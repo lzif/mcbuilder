@@ -495,10 +495,11 @@ mcbuild check <script> [--config PATH]
 # Exit 1 on errors, 0 otherwise. No rendering, no artifact.
 
 mcbuild run <script> [--out dist/] [--preview] [--views SPEC]
-                     [--count N] [--config PATH] [--include-air]
+                     [--count N] [--config PATH] [--air none|explicit|all]
 # validate + export + previews into dist/run-NNN/.
 # --preview renders all three tiers (skipped entirely on validation errors).
-# --include-air writes air cells into the .nbt (default: air excluded).
+# --air explicit writes only your minecraft:air cells; --air all / --include-air
+# fills the whole bbox with air (default: no air in the .nbt).
 
 mcbuild assets fetch --version <x.y.z> [--cache-dir DIR]
 # one-time per version: registry + vanilla client assets (textures,
@@ -576,8 +577,14 @@ structure-block file (gzipped NBT with `DataVersion`, `size`,
 - **Deterministic**: palette follows grid insertion order, blocks are
   sorted by (x, y, z), gzip uses `mtime=0` with no filename — the same
   grid always yields byte-identical output.
-- **Air**: excluded by default (neither unset nor carved cells are
-  written); `--include-air` writes them explicitly.
+- **Air** (`--air`): `none` (default) writes no air — neither unset
+  nor carved cells. `explicit` writes only cells you set to
+  `minecraft:air` and leaves unset cells as structure-void: use it for
+  interior air pockets that must displace the world *inside* the build
+  without touching what's around it (underwater bases, cave carve-outs).
+  `all` (alias `--include-air`) also writes every unset bbox cell as air —
+  it clears the **whole bounding box** on paste, which drains the ocean
+  around an underwater build.
 - **Entities/block entities**: out of scope — `entities` is written
   as an empty list. NBT on block strings is syntax-checked only.
 

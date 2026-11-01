@@ -358,7 +358,7 @@ def _fmt_issue(issue) -> str:
 # ---------------------------------------------------------------------------
 
 def _export_artifact(
-    grid, run_dir: Path, stem: str, *, cfg, include_air: bool
+    grid, run_dir: Path, stem: str, *, cfg, include_air: bool | str
 ) -> tuple[Path, int, list[str]]:
     """Write the vanilla structure-block ``.nbt`` deploy artifact.
 
@@ -511,7 +511,8 @@ def cmd_run(args) -> int:
 
     if not errors:
         artifact_path, data_version, export_warnings = _export_artifact(
-            grid, run_dir, stem, cfg=ctx["config"], include_air=args.include_air
+            grid, run_dir, stem, cfg=ctx["config"],
+            include_air="all" if args.include_air else args.air
         )
         warnings.extend({"message": w} for w in export_warnings)
         try:
@@ -820,9 +821,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="path to mcbuild.toml (default: discover from the script's directory)",
     )
     r.add_argument(
+        "--air",
+        choices=export_nbt_mod.AIR_MODES,
+        default="none",
+        help="air cells in the deploy artifact: 'none' (default) writes no "
+        "air; 'explicit' writes only cells you set to minecraft:air "
+        "(interior air pockets, e.g. underwater bases — the surroundings "
+        "stay untouched); 'all' also fills every unset bbox cell with air",
+    )
+    r.add_argument(
         "--include-air",
         action="store_true",
-        help="include air blocks in the deploy artifact",
+        help="alias for --air all (clears the whole bounding box on paste)",
     )
     r.set_defaults(func=cmd_run)
 
