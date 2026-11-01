@@ -106,4 +106,3 @@ house.py — FAILED (165 blocks, 11 types, 1 errors, 0 warnings)
 
 - [API reference](api.md): every shape and method.
 - [Blocks and directions](blocks.md): block strings, `facing`, coordinates.
-- [Design guide](design.md): making it look good.
