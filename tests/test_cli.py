@@ -33,12 +33,6 @@ HANDMADE_BLOCKS = {
 
 
 @pytest.fixture(autouse=True)
-def _pin_hashseed(monkeypatch):
-    # main() re-execs the process when PYTHONHASHSEED is unset; pin it here.
-    monkeypatch.setenv("PYTHONHASHSEED", "0")
-
-
-@pytest.fixture(autouse=True)
 def _registry(monkeypatch):
     reg = Registry(HANDMADE_BLOCKS, "test")
     monkeypatch.setattr(Registry, "load", classmethod(lambda cls, version, cache_dir: reg))

@@ -20,12 +20,6 @@ from mcbuilder import report as report_mod
 from mcbuilder.cli import main
 
 
-@pytest.fixture(autouse=True)
-def _pin_hashseed(monkeypatch):
-    # main() re-execs the process when PYTHONHASHSEED is unset; pin it here.
-    monkeypatch.setenv("PYTHONHASHSEED", "0")
-
-
 # ---------------------------------------------------------------------------
 # fixtures: tiny hand-built run dirs (real BUILD + real .nbt serializer)
 # ---------------------------------------------------------------------------
