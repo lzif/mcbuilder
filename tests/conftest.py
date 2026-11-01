@@ -17,6 +17,7 @@ def _pin_hashseed(monkeypatch):
     """`mcbuild` re-execs itself when PYTHONHASHSEED is unset; pin it for every test."""
     monkeypatch.setenv("PYTHONHASHSEED", "0")
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
