@@ -59,9 +59,11 @@ mcbuild run hut.py --preview --guide    # previews + hut.nbt + layer guide in di
 | [Blocks and directions](docs/blocks.md) | block strings, `facing`/`axis`, coordinates, rotation |
 | [Previews](docs/previews.md) | render tiers, camera views, close-ups |
 | [CLI](docs/cli.md) | every command and flag, `report.json`, `.nbt` export, build guides |
+| [Design guide (draft)](docs/design-draft.md) | medieval timber-frame techniques measured from expert builds; provisional |
 
-Examples live in [`examples/`](examples/): a homestead (house, barn, watchtower, well), an
-underwater base, a floating observatory and a set of small waystones.
+Examples live in [`examples/`](examples/): a storehouse (the design guide's test build), a
+homestead (house, barn, watchtower, well), an underwater base, a floating observatory and a set of
+small waystones.
 
 ## License
 
