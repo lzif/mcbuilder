@@ -1421,6 +1421,23 @@ def test_quad_culled_by_neighbor():
                                            "minecraft:stone", occ)
 
 
+def test_leaves_never_cull_neighbor_faces():
+    """Leaves occlude for AO but not for face culling (vanilla fancy
+    leaves): faces behind a leaves block must still render, otherwise the
+    cut-out holes show the background and canopies look hollow/white."""
+    arr = np.zeros((2, 1, 1), dtype=np.int32)
+    palette = ["minecraft:oak_leaves[persistent=true]"]
+    occ = np.zeros((4, 3, 3), dtype=bool)
+    occ[1:3, 1, 1] = True  # leaves still occlude for AO
+    assert not pf._quad_culled_by_neighbor(
+        (1, 0, 0), 0, 0, 0, arr, palette, "minecraft:oak_leaves", occ)
+    # a stone face against leaves is kept too
+    palette2 = ["minecraft:stone", "minecraft:oak_leaves"]
+    arr2 = np.array([[[0]], [[1]]], dtype=np.int32)
+    assert not pf._quad_culled_by_neighbor(
+        (1, 0, 0), 0, 0, 0, arr2, palette2, "minecraft:stone", occ)
+
+
 def test_same_translucent_neighbor():
     arr = np.zeros((3, 1, 1), dtype=np.int32)
     palette = ["minecraft:glass", "minecraft:stone",

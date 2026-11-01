@@ -751,8 +751,23 @@ def _quad_culled_by_neighbor(cull, x, y, z, arr, palette, name,
     # it for array indexing.
     nx, ny, nz = (int(x + cull[0]), int(y + cull[1]), int(z + cull[2]))
     if occ_padded[nx + 1, ny + 1, nz + 1]:
-        return True
+        # Leaves occlude for AO but NOT for face culling: vanilla (fancy
+        # graphics) leaves are noOcclusion, so faces behind them still
+        # render and show through the cut-out holes. Culling them made
+        # canopies read as hollow shells with the background showing
+        # through every hole (frosted/white-looking trees).
+        return not _is_leaves_cell(arr, palette, nx, ny, nz)
     return _is_same_translucent_neighbor(arr, palette, name, nx, ny, nz)
+
+
+def _is_leaves_cell(arr, palette, nx, ny, nz) -> bool:
+    if not (0 <= nx < arr.shape[0] and 0 <= ny < arr.shape[1]
+            and 0 <= nz < arr.shape[2]):
+        return False
+    nidx = int(arr[nx, ny, nz])
+    if nidx < 0 or nidx >= len(palette):
+        return False
+    return _fast._split_blockstate(palette[nidx])[0].endswith("leaves")
 
 
 def _is_same_translucent_neighbor(arr, palette, name, nx, ny, nz) -> bool:
