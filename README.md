@@ -8,7 +8,8 @@ Build Minecraft structures from Python. Write a short script, and mcbuilder:
 3. **exports** a structure-block `.nbt` you can paste with a structure block, Litematica or a
    server plugin,
 4. **writes a build guide**: a top-down plan for every layer plus material lists, for building by
-   hand in survival.
+   hand in survival,
+5. **imports** an existing `.nbt` back into a readable script, to study or remix someone's build.
 
 It is designed for AI agents as much as for people: one obvious way to do each thing, errors that
 point at the line of your script, and previews you can actually check.

@@ -5,6 +5,7 @@ mcbuild init [path] [--force]       write a starter build script
 mcbuild check <script>              validate only
 mcbuild run <script> [options]      validate, export .nbt, render previews, write a guide
 mcbuild diff <run_a> <run_b>        what changed between two runs
+mcbuild import <file.nbt>           turn an existing structure into a builder script
 mcbuild assets fetch --version V    download the block registry and vanilla assets
 ```
 
@@ -99,6 +100,27 @@ mcbuild diff run-001 run-002          # or just: mcbuild diff 001 002
 Lists added, removed and replaced cells (in script coordinates, so moving one part doesn't make
 everything look changed) and writes a side-by-side image when both runs rendered the same view.
 `--max N` limits the list. Exit code `1` when the runs differ, like `diff(1)`.
+
+## `mcbuild import`
+
+```bash
+mcbuild import tavern.nbt                 # writes tavern.py next to it
+mcbuild import tavern.nbt -o study/tavern.py --keep-air
+```
+
+Reads a structure-block `.nbt` (convert `.schem` / `.litematic` to `.nbt` first) and writes a
+script that rebuilds it exactly:
+
+- a header with the size, block counts per type and blocks per layer, for studying the build;
+- one named constant per block state (`OAK_STAIRS_N_BOTTOM = "minecraft:oak_stairs[...]"`),
+  most used first;
+- runs of the same block merged into `BUILD.box(...)`, single blocks as `BUILD.set(...)`,
+  grouped by layer from the bottom up.
+
+Coordinates start at the structure's north-west bottom corner. Air is left out unless
+`--keep-air`; `structure_void` is always left out. Block-entity data (chest contents, sign text)
+and entities are not carried over; the header says how many were dropped. `--force` overwrites
+an existing script.
 
 ## `mcbuild assets fetch`
 

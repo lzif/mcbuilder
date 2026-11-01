@@ -658,6 +658,27 @@ def cmd_run(args) -> int:
     return 1 if errors else 0
 
 
+def cmd_import(args) -> int:
+    from mcbuilder import importer
+
+    src = Path(args.file)
+    if not src.is_file():
+        raise CliError(f"no such file: {src}")
+    out = Path(args.output) if args.output else src.with_suffix(".py")
+    if out.exists() and not args.force:
+        raise CliError(f"refusing to overwrite {out} (use --force)")
+    try:
+        structure = importer.read_structure(src, keep_air=args.keep_air)
+    except importer.StructureImportError as e:
+        raise CliError(str(e)) from None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(importer.to_script(structure), encoding="utf-8")
+    print(f"wrote {out}")
+    for line in importer.summary(structure, top=10):
+        print(f"  {line}" if line else "")
+    return 0
+
+
 def cmd_diff(args) -> int:
     """Compare two runs' voxel data; print the report and a comparison image.
 
@@ -890,6 +911,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="max change entries listed in the report (default: 30)",
     )
     d.set_defaults(func=cmd_diff)
+
+    im = sub.add_parser(
+        "import",
+        help="turn a structure .nbt into a builder script",
+        description=(
+            "Read an existing build (structure-block .nbt) and write an "
+            "mcbuilder script that rebuilds "
+            "it exactly: one constant per block state, same-block runs merged "
+            "into box() calls, grouped by layer, with a size/palette summary "
+            "at the top."
+        ),
+    )
+    im.add_argument("file", help="the structure .nbt file")
+    im.add_argument(
+        "-o", "--output", default=None, help="script to write (default: <file stem>.py next to it)"
+    )
+    im.add_argument(
+        "--keep-air",
+        action="store_true",
+        help="keep air cells from the file as explicit minecraft:air",
+    )
+    im.add_argument("--force", action="store_true", help="overwrite the script if it exists")
+    im.set_defaults(func=cmd_import)
 
     a = sub.add_parser("assets", help="manage cached Minecraft assets")
     asub = a.add_subparsers(dest="assets_cmd", required=True, metavar="<command>")
