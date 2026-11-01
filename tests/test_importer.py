@@ -79,3 +79,19 @@ def test_cli_import(tmp_path, capsys):
     assert "top block types" in capsys.readouterr().out
     assert main(["import", str(path)]) == 1  # refuses to overwrite
     assert main(["import", str(path), "--force"]) == 0
+
+
+def test_registry_drops_unknown_properties(tmp_path):
+    from mcbuilder.registry import Registry
+
+    b = mb.Build()
+    with b:
+        b.set(0, 0, 0, "minecraft:stone_slab[half=bottom,type=top]")  # Bedrock-style extra
+        b.set(1, 0, 0, "minecraft:structure_block[mode=save]")
+    path = _write_nbt(b, tmp_path / "x.nbt")
+    reg = Registry(
+        {"minecraft:stone_slab": {"properties": {"type": ["top", "bottom", "double"]}}}, "t"
+    )
+    s = read_structure(path, registry=reg)
+    assert list(s.blocks.values()) == ["minecraft:stone_slab[type=top]"]
+    assert s.dropped_properties == {"stone_slab.half": 1}

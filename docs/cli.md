@@ -118,7 +118,11 @@ script that rebuilds it exactly:
   grouped by layer from the bottom up.
 
 Coordinates start at the structure's north-west bottom corner. Air is left out unless
-`--keep-air`; `structure_void` is always left out. Block-entity data (chest contents, sign text)
+`--keep-air`; `structure_void`, `structure_block` and `jigsaw` are always left out.
+
+Files converted from Bedrock often carry Bedrock-only properties next to the Java ones
+(`wall_post_bit`, `occupied_bit`, `half` on slabs, ...). Properties the registry of your
+`mc_version` doesn't know are dropped and listed in the header; `--raw` keeps everything. Block-entity data (chest contents, sign text)
 and entities are not carried over; the header says how many were dropped. `--force` overwrites
 an existing script.
 

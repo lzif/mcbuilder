@@ -27,7 +27,8 @@ from mcbuilder.errors import McbuilderError
 __all__ = ["Structure", "read_structure", "to_script"]
 
 AIR_BLOCKS = {"minecraft:air", "minecraft:cave_air", "minecraft:void_air"}
-SKIP_BLOCKS = {"minecraft:structure_void"}
+# Editor leftovers, not part of the build.
+SKIP_BLOCKS = {"minecraft:structure_void", "minecraft:structure_block", "minecraft:jigsaw"}
 
 
 class StructureImportError(McbuilderError):
@@ -43,6 +44,7 @@ class Structure:
     data_version: int | None = None
     dropped_block_entities: int = 0
     dropped_entities: int = 0
+    dropped_properties: Counter = field(default_factory=Counter)
     notes: list[str] = field(default_factory=list)
 
 
@@ -88,12 +90,46 @@ def _read_nbt(root) -> Structure:
     )
 
 
-def read_structure(path: str | Path, *, keep_air: bool = False) -> Structure:
+def _clean_properties(blocks: dict, registry) -> Counter:
+    """Drop properties the registry doesn't know, in place; returns what was dropped.
+
+    Files converted from Bedrock often carry extra Bedrock-only properties
+    next to the Java ones (``wall_post_bit``, ``occupied_bit``, ``half`` on
+    slabs...). The Java properties are already there, so dropping the
+    extras gives the right Java block.
+    """
+    dropped: Counter = Counter()
+    cache: dict[str, str] = {}
+    per_state: dict[str, list[str]] = {}
+    for p, b in blocks.items():
+        if b in cache:
+            blocks[p] = cache[b]
+            for k in per_state[b]:
+                dropped[k] += 1
+            continue
+        name, _, rest = b.partition("[")
+        legal = registry.blocks.get(name)
+        if legal is None or not rest:
+            cache[b], per_state[b] = b, []
+            continue
+        props = dict(kv.split("=", 1) for kv in rest.rstrip("]").split(",") if "=" in kv)
+        keep = {k: v for k, v in props.items() if k in legal and v in legal[k]}
+        per_state[b] = [f"{name.split(':', 1)[1]}.{k}" for k in props.keys() - keep.keys()]
+        for k in per_state[b]:
+            dropped[k] += 1
+        cache[b] = _state(name, keep)
+        blocks[p] = cache[b]
+    return dropped
+
+
+def read_structure(path: str | Path, *, keep_air: bool = False, registry=None) -> Structure:
     """Read a structure-block ``.nbt`` file.
 
     Coordinates are shifted so the smallest x, y and z are 0. Air is
     dropped unless ``keep_air`` (then it comes back as ``minecraft:air``);
-    ``structure_void`` is always dropped.
+    ``structure_void``, ``structure_block`` and ``jigsaw`` are always dropped. With a ``registry``, properties it
+    doesn't know (Bedrock leftovers from converted files) are dropped and
+    counted in ``dropped_properties``.
     """
     path = Path(path)
     try:
@@ -119,6 +155,8 @@ def read_structure(path: str | Path, *, keep_air: bool = False) -> Structure:
     if out:
         mins = [min(p[i] for p in out) for i in range(3)]
         out = {(x - mins[0], y - mins[1], z - mins[2]): b for (x, y, z), b in out.items()}
+    if registry is not None:
+        s.dropped_properties = _clean_properties(out, registry)
     s.blocks = out
     s.source = path.name
     return s
@@ -194,6 +232,11 @@ def summary(structure: Structure, top: int = 25) -> list[str]:
         lines.append(
             f"not imported: {structure.dropped_block_entities} block-entity data "
             f"(chest contents, signs...), {structure.dropped_entities} entities"
+        )
+    if structure.dropped_properties:
+        lines.append(
+            "dropped unknown properties (Bedrock leftovers?): "
+            + ", ".join(f"{k} x{n}" for k, n in sorted(structure.dropped_properties.items()))
         )
     lines.append("")
     lines.append(f"top block types (of {len(by_name)}):")

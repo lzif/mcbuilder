@@ -668,7 +668,13 @@ def cmd_import(args) -> int:
     if out.exists() and not args.force:
         raise CliError(f"refusing to overwrite {out} (use --force)")
     try:
-        structure = importer.read_structure(src, keep_air=args.keep_air)
+        registry = None
+        if not args.raw:
+            try:
+                registry = _load_registry(_resolve_config(src.resolve(), args.config))
+            except CliError as e:
+                print(f"warning: properties not cleaned ({e})", file=sys.stderr)
+        structure = importer.read_structure(src, keep_air=args.keep_air, registry=registry)
     except importer.StructureImportError as e:
         raise CliError(str(e)) from None
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -933,6 +939,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="keep air cells from the file as explicit minecraft:air",
     )
     im.add_argument("--force", action="store_true", help="overwrite the script if it exists")
+    im.add_argument(
+        "--raw",
+        action="store_true",
+        help="keep every block property as-is (by default properties the registry "
+        "of mc_version doesn't know, e.g. Bedrock leftovers, are dropped)",
+    )
+    im.add_argument("--config", default=None, help="path to mcbuild.toml")
     im.set_defaults(func=cmd_import)
 
     a = sub.add_parser("assets", help="manage cached Minecraft assets")
