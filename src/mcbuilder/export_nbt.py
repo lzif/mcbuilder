@@ -19,10 +19,18 @@ Coordinate mapping: ``pos`` is ``[x, y, z]`` offsets from the bbox
 minimum, ``size`` is ``[sx, sy, sz]`` — matching ``VoxelGrid.to_dense``,
 whose array axis 0/1/2 is x/y/z.
 
-Air handling: with ``include_air=False`` (default) neither unset cells
-nor carved-air cells appear in ``blocks`` (air may still sit in the
-palette, unreferenced — vanilla-faithful). With ``include_air=True``,
-unset cells inside the bbox are written explicitly as air.
+Air handling (``include_air``):
+
+- ``False`` / ``"none"`` (default): neither unset cells nor carved-air
+  cells appear in ``blocks`` (air may still sit in the palette,
+  unreferenced — vanilla-faithful). Pasting leaves whatever was there.
+- ``"explicit"``: only cells explicitly set to ``minecraft:air`` are
+  written; unset cells stay structure-void. Use this for builds that must
+  displace the world *inside* the structure without touching what's
+  *around* it — e.g. an underwater base whose interior air pocket must
+  push out ocean water while the surrounding ocean stays wet.
+- ``True`` / ``"all"``: every cell in the bbox is written; unset cells
+  become air (clears the whole bounding box on paste).
 
 Determinism: palette order follows grid insertion order, ``blocks`` are
 sorted by ``(x, y, z)``, NBT compounds keep insertion order, and the gzip
@@ -117,18 +125,37 @@ def _palette_entry(canonical: str) -> tuple[Compound, str | None]:
     return entry, warning
 
 
+AIR_MODES = ("none", "explicit", "all")
+
+
+def _air_mode(include_air) -> str:
+    if include_air is False or include_air is None:
+        return "none"
+    if include_air is True:
+        return "all"
+    if include_air in AIR_MODES:
+        return include_air
+    raise ExportError(
+        f"include_air must be one of {AIR_MODES} (or a bool), "
+        f"got {include_air!r}")
+
+
 def write_structure_nbt(
     grid,
     path: Path | str,
     *,
     data_version: int,
-    include_air: bool = False,
+    include_air: bool | str = False,
 ) -> list[str]:
     """Write ``grid`` as a gzipped vanilla structure ``.nbt`` file.
+
+    ``include_air``: ``False``/``"none"``, ``"explicit"`` or
+    ``True``/``"all"`` — see the module docstring.
 
     Returns a list of warning strings (block-entity NBT dropped, ...).
     Raises :class:`ExportError` on an empty grid.
     """
+    air_mode = _air_mode(include_air)
     arr, palette, _provenance = grid.to_dense()
     if arr.size == 0:
         raise ExportError("build is empty — nothing to export")
@@ -144,7 +171,7 @@ def write_structure_nbt(
             air_idx = i
         nbt_palette.append(entry)
 
-    if include_air and air_idx is None:
+    if air_mode == "all" and air_idx is None:
         # No air was ever placed; the format still needs an air entry for
         # the explicitly-written unset cells below.
         air_idx = len(nbt_palette)
@@ -157,10 +184,10 @@ def write_structure_nbt(
             for z in range(sz):
                 idx = int(arr[x, y, z])
                 if idx == voxels_mod.UNSET:
-                    if not include_air:
+                    if air_mode != "all":
                         continue
-                    idx = air_idx  # set above when include_air is True
-                elif not include_air and idx == air_idx:
+                    idx = air_idx  # set above when air_mode is "all"
+                elif air_mode == "none" and idx == air_idx:
                     continue
                 block_tags.append(
                     Compound(
