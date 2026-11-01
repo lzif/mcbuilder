@@ -38,8 +38,8 @@ def _canopy():
     """Tiered roof: y=5 ring (stair eave, open corners) + plate; y=6 stepped
     3x3 with a SINGLE amethyst block at the center (blueprint top view)."""
     g = mb.Geometry()
-    plate = mb.part.box(c1=(0, 0, 0), c2=(4, 0, 4), block="minecraft:blackstone_slab[type=bottom]")
-    for x, y, z, b in plate.cells():
+    plate = mb.shapes.box((0, 0, 0), (4, 0, 4), "minecraft:blackstone_slab[type=bottom]")
+    for x, _y, z, b in plate.cells():
         g.set(x + 1, 5, z + 1, b)
     for i in (2, 3, 4):
         g.set(i, 5, 0, "minecraft:blackstone_stairs[facing=north,half=top]")

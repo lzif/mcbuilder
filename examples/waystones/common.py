@@ -90,19 +90,12 @@ def _hanging(block: str, value: str) -> str:
     return _set_prop(block, "hanging", value)
 
 
-def _shift(geo: mb.Geometry, dx: int, dy: int, dz: int) -> mb.Geometry:
-    out = mb.Geometry()
-    for x, y, z, b in geo.cells():
-        out.set(x + dx, y + dy, z + dz, b)
-    return out
-
-
 def corner_lanterns(*, post_block: str, lantern_block: str) -> mb.Geometry:
     """Corner posts at (0/6,1,0/6) with lanterns above at y=2."""
     lantern = _hanging(lantern_block, "false")
     g = mb.Geometry()
     for cx, cz in _CORNERS:
-        g += _shift(mb.part.pillar(height=1, block=post_block), cx, 1, cz)
+        g += mb.shapes.pillar((cx, 1, cz), 1, post_block)
         g += _at(cx, 2, cz, lantern)
     return g
 
@@ -111,7 +104,7 @@ def pillars(*, pillar_block: str) -> mb.Geometry:
     """Four pillars at (1,1),(1,5),(5,1),(5,5), y=2..4."""
     g = mb.Geometry()
     for px, pz in _PILLARS:
-        g += _shift(mb.part.pillar(height=3, block=pillar_block), px, 2, pz)
+        g += mb.shapes.pillar((px, 2, pz), 3, pillar_block)
     return g
 
 
@@ -130,7 +123,7 @@ def canopy(*, plate_slab: str, eave_stair: str, corner_block: str, cap_block: st
     canopy reads as one solid 7x7 plate (deviation from a literal
     12+4 read — gaps there would look broken).
     """
-    plate = mb.part.box(c1=(0, 0, 0), c2=(4, 0, 4), block=plate_slab)
+    plate = mb.shapes.box((0, 0, 0), (4, 0, 4), plate_slab)
     ring = mb.Geometry()
     for i in (2, 3, 4):
         ring.set(i, 0, 0, f"{eave_stair}[facing=north,half=top]")
@@ -141,5 +134,5 @@ def canopy(*, plate_slab: str, eave_stair: str, corner_block: str, cap_block: st
         ring.set(cx, 0, cz, corner_block)
     for kx, kz in ((1, 0), (5, 0), (1, 6), (5, 6), (0, 1), (0, 5), (6, 1), (6, 5)):
         ring.set(kx, 0, kz, corner_block)
-    cap = mb.part.box(c1=(0, 0, 0), c2=(2, 0, 2), block=cap_block)
-    return _shift(plate, 1, 5, 1) + _shift(ring, 0, 5, 0) + _shift(cap, 2, 6, 2)
+    cap = mb.shapes.box((0, 0, 0), (2, 0, 2), cap_block)
+    return plate.shift(1, 5, 1) + ring.shift(0, 5, 0) + cap.shift(2, 6, 2)

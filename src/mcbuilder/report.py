@@ -1,4 +1,4 @@
-"""report.json builder (PLAN rev 7, section 6).
+"""report.json builder.
 
 Schema::
 
@@ -14,8 +14,8 @@ Schema::
       "run_dir": "dist/run-003"
     }
 
-Every fast-tier preview is flagged ``directions_untrusted: true``
-(PLAN rev 7, section 3) — the fast renderer cannot show facing or connection
+Every fast-tier preview is flagged ``directions_untrusted: true``:
+the fast renderer cannot show facing or connection
 state, so a preview must never be trusted for block directions.
 """
 
@@ -25,14 +25,15 @@ import json
 from pathlib import Path
 
 
-def view_entry(*, file: str, view, directions_untrusted: bool = True,
-               directions_trusted: bool = False) -> dict:
+def view_entry(
+    *, file: str, view, directions_untrusted: bool = True, directions_trusted: bool = False
+) -> dict:
     """Build one ``views[]`` entry from a View-like object.
 
     ``view`` needs ``azimuth``, ``elevation`` and ``label`` attributes
     (see mcbuilder.views.View); ``file`` is the PNG filename.
     The fast tier passes ``directions_untrusted=True``; the
-    direction-trusted tier (PLAN §3) passes ``directions_trusted=True``
+    direction-trusted tier passes ``directions_trusted=True``
     (and ``directions_untrusted=False``).
     """
     return {
@@ -45,13 +46,18 @@ def view_entry(*, file: str, view, directions_untrusted: bool = True,
     }
 
 
-def build_report(*, errors: list[dict], warnings: list[dict],
-                 block_counts: dict[str, int],
-                 dimensions: tuple[int, int, int] | None,
-                 views: list[dict], run_dir: str,
-                 artifacts: list[dict] | None = None,
-                 overwritten_placements: int = 0,
-                 origin: tuple[int, int, int] | list[int] | None = None) -> dict:
+def build_report(
+    *,
+    errors: list[dict],
+    warnings: list[dict],
+    block_counts: dict[str, int],
+    dimensions: tuple[int, int, int] | None,
+    views: list[dict],
+    run_dir: str,
+    artifacts: list[dict] | None = None,
+    overwritten_placements: int = 0,
+    origin: tuple[int, int, int] | list[int] | None = None,
+) -> dict:
     """Assemble the report.json dict. Inputs are copied, never mutated.
 
     ``origin`` is the world-space ``[minx, miny, minz]`` of the exported

@@ -30,6 +30,7 @@ def _pin_hashseed(monkeypatch):
 # fixtures: tiny hand-built run dirs (real BUILD + real .nbt serializer)
 # ---------------------------------------------------------------------------
 
+
 def _build_a(b) -> None:
     b.box((0, 0, 0), (1, 0, 1), "minecraft:stone")  # 4 stone cells
     b.set(0, 1, 0, "minecraft:oak_planks")
@@ -68,9 +69,7 @@ def _make_run(dist: Path, name: str, build_fn, *, views=(), origin=None) -> Path
         build_fn(b)
     run = dist / name
     run.mkdir(parents=True)
-    export_nbt_mod.write_structure_nbt(
-        b.grid, run / "hut.nbt", data_version=4189, include_air=False
-    )
+    export_nbt_mod.write_structure_nbt(b.grid, run / "hut.nbt", data_version=4189, air="none")
     if origin == "auto":
         _pb = b.grid._placed_bounds()
         origin = list(_pb[0]) if _pb else [0, 0, 0]
@@ -103,6 +102,7 @@ def _make_run(dist: Path, name: str, build_fn, *, views=(), origin=None) -> Path
 # ---------------------------------------------------------------------------
 # core diff
 # ---------------------------------------------------------------------------
+
 
 def test_diff_reports_exact_added_removed_changed(tmp_path):
     dist = tmp_path / "dist"
@@ -195,6 +195,7 @@ def test_format_diff_reports_counts_and_caps_entries(tmp_path):
 # run id resolution + error paths
 # ---------------------------------------------------------------------------
 
+
 def test_resolve_run_dir_accepts_bare_number(tmp_path):
     dist = tmp_path / "dist"
     (dist / "run-007").mkdir(parents=True)
@@ -247,6 +248,7 @@ def test_load_run_voxels_without_report_is_clean_error(tmp_path):
 # comparison image
 # ---------------------------------------------------------------------------
 
+
 def test_comparison_image_is_side_by_side(tmp_path):
     dist = tmp_path / "dist"
     a = _make_run(dist, "run-001", _build_a, views=["iso"])
@@ -276,6 +278,7 @@ def test_comparison_image_none_without_shared_view(tmp_path):
 # ---------------------------------------------------------------------------
 # thin CLI tests: exit codes + clean errors
 # ---------------------------------------------------------------------------
+
 
 def test_cli_diff_reports_changes_and_exits_1(tmp_path, capsys):
     dist = tmp_path / "dist"
@@ -325,7 +328,7 @@ def test_cli_diff_writes_comparison_image(tmp_path, capsys):
     assert f"comparison: {img}" in out
 
 
-# ------------------------------------------------- finding 8: world origin
+# ------------------------------------------------- world origin
 
 
 def _build_tower_and_islet(b, islet_dx: int) -> None:
@@ -336,10 +339,8 @@ def _build_tower_and_islet(b, islet_dx: int) -> None:
 
 def test_diff_world_origin_flags_only_the_moved_islet(tmp_path):
     dist = tmp_path / "dist"
-    a = _make_run(dist, "run-001",
-                  lambda b: _build_tower_and_islet(b, 0), origin="auto")
-    b = _make_run(dist, "run-002",
-                  lambda b: _build_tower_and_islet(b, 2), origin="auto")
+    a = _make_run(dist, "run-001", lambda b: _build_tower_and_islet(b, 0), origin="auto")
+    b = _make_run(dist, "run-002", lambda b: _build_tower_and_islet(b, 2), origin="auto")
     d = diff_mod.diff_run_dirs(a, b)
     # The tower (5 stone cells at x=0) is untouched in world coordinates:
     # only the islet's old/new cells appear.
@@ -385,12 +386,22 @@ def test_first_common_view_prefers_direction_trusted(tmp_path):
     a = _make_run(dist, "run-001", _build_a)
     b = _make_run(dist, "run-002", _build_a)
     entries = [
-        {"file": "previews/iso.png", "label": "iso",
-         "azimuth": 45, "elevation": 25,
-         "directions_untrusted": True, "directions_trusted": False},
-        {"file": "previews_faithful/iso.png", "label": "iso",
-         "azimuth": 45, "elevation": 25,
-         "directions_untrusted": False, "directions_trusted": True},
+        {
+            "file": "previews/iso.png",
+            "label": "iso",
+            "azimuth": 45,
+            "elevation": 25,
+            "directions_untrusted": True,
+            "directions_trusted": False,
+        },
+        {
+            "file": "previews_faithful/iso.png",
+            "label": "iso",
+            "azimuth": 45,
+            "elevation": 25,
+            "directions_untrusted": False,
+            "directions_trusted": True,
+        },
     ]
     for run in (a, b):
         _write_views_report(run, entries)
@@ -406,9 +417,14 @@ def test_first_common_view_falls_back_to_fast_tier(tmp_path):
     a = _make_run(dist, "run-001", _build_a)
     b = _make_run(dist, "run-002", _build_a)
     entries = [
-        {"file": "previews/iso.png", "label": "iso",
-         "azimuth": 45, "elevation": 25,
-         "directions_untrusted": True, "directions_trusted": False},
+        {
+            "file": "previews/iso.png",
+            "label": "iso",
+            "azimuth": 45,
+            "elevation": 25,
+            "directions_untrusted": True,
+            "directions_trusted": False,
+        },
     ]
     for run in (a, b):
         _write_views_report(run, entries)
@@ -417,7 +433,7 @@ def test_first_common_view_falls_back_to_fast_tier(tmp_path):
     assert pa == a / "previews" / "iso.png"
 
 
-# ------------------------------------------------- finding 8: rng namespaces
+# ------------------------------------------------- rng namespaces
 
 
 def test_rng_shared_stream_unchanged_without_namespace():

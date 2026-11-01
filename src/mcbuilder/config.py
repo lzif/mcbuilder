@@ -33,7 +33,7 @@ class McbuildConfig:
     assets_dir: Path | None = None
 
     @classmethod
-    def load(cls, path: str | Path) -> "McbuildConfig":
+    def load(cls, path: str | Path) -> McbuildConfig:
         """Load configuration from a ``mcbuild.toml`` file.
 
         Missing keys fall back to defaults. Raises ``FileNotFoundError``
@@ -51,7 +51,7 @@ class McbuildConfig:
         return cls._from_dict(data)
 
     @classmethod
-    def find(cls, start: str | Path) -> "McbuildConfig | None":
+    def find(cls, start: str | Path) -> McbuildConfig | None:
         """Walk up from ``start`` (file or directory) to the filesystem root.
 
         Returns the first ``mcbuild.toml`` found, or ``None`` when there is
@@ -67,7 +67,7 @@ class McbuildConfig:
         return None
 
     @classmethod
-    def _from_dict(cls, data: dict) -> "McbuildConfig":
+    def _from_dict(cls, data: dict) -> McbuildConfig:
         mc_version = data.get("mc_version", "26.2")
         if not isinstance(mc_version, str) or not mc_version:
             raise ValueError("mc_version must be a non-empty string")
@@ -80,24 +80,16 @@ class McbuildConfig:
                 f"max_dimensions must be a list of 3 integers, got {raw_dims!r}"
             ) from exc
         if len(dims) != 3 or any(d <= 0 for d in dims):
-            raise ValueError(
-                f"max_dimensions must be 3 positive integers, got {raw_dims!r}"
-            )
+            raise ValueError(f"max_dimensions must be 3 positive integers, got {raw_dims!r}")
 
         allowlist = data.get("allowlist", [])
-        if not isinstance(allowlist, list) or not all(
-            isinstance(a, str) for a in allowlist
-        ):
-            raise ValueError(
-                f"allowlist must be a list of strings, got {allowlist!r}"
-            )
+        if not isinstance(allowlist, list) or not all(isinstance(a, str) for a in allowlist):
+            raise ValueError(f"allowlist must be a list of strings, got {allowlist!r}")
 
         assets_dir = data.get("assets_dir")
         if assets_dir is not None:
             if not isinstance(assets_dir, str):
-                raise ValueError(
-                    f"assets_dir must be a string path, got {assets_dir!r}"
-                )
+                raise ValueError(f"assets_dir must be a string path, got {assets_dir!r}")
             assets_dir = Path(assets_dir).expanduser()
 
         return cls(

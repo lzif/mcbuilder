@@ -1,6 +1,6 @@
 [project]
 name = "mcbuilder"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python tooling for AI agents that build Minecraft structures: builder DSL, block validator, multi-format export, preview renderer"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -27,3 +28,19 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mcbuilder"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "B008", "B904", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/**" = ["I001"]
+"tests/**" = ["E731"]
+"src/mcbuilder/render/faithful.py" = ["B023"]  # closures are called inside the same iteration
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

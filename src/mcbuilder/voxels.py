@@ -12,7 +12,7 @@ center sits at the origin). Each axis accepts ``-max_dim <= c < max_dim``.
 Air convention: cells that were never placed read as ``-1`` (unset) in
 the dense array. An explicit ``"minecraft:air"`` placement *is* interned
 in the palette — carved air stays distinguishable from untouched cells,
-which is what the exporter's ``include_air`` flag needs.
+which is what the exporter's ``air="explicit"`` mode needs.
 """
 
 from __future__ import annotations
@@ -80,12 +80,7 @@ class VoxelGrid:
             self._palette.append(canonical)
             self._index[canonical] = idx
         old = self._cells.get((x, y, z))
-        if (
-            old is not None
-            and old != idx
-            and self._palette[old] != AIR
-            and canonical != AIR
-        ):
+        if old is not None and old != idx and self._palette[old] != AIR and canonical != AIR:
             # A real block replaced by a different real block (carving with
             # air, or re-placing the same block, doesn't count).
             self._overwrites += 1
@@ -152,9 +147,7 @@ class VoxelGrid:
             compacted[mask] = lookup[arr[mask]]
             arr = compacted
             palette = [palette[old] for old in used]
-            provenance = {
-                remap[old]: provenance[old] for old in used if old in provenance
-            }
+            provenance = {remap[old]: provenance[old] for old in used if old in provenance}
         return arr, palette, provenance
 
     def _placed_bounds(self) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
@@ -180,6 +173,16 @@ class VoxelGrid:
         if mins is None or maxs is None:
             return None
         return (mins[0], mins[1], mins[2]), (maxs[0], maxs[1], maxs[2])
+
+    def crop(self, c1: tuple[int, int, int], c2: tuple[int, int, int]) -> VoxelGrid:
+        """A new grid holding only the cells inside the box ``c1``–``c2``."""
+        lo = [min(a, b) for a, b in zip(c1, c2)]
+        hi = [max(a, b) for a, b in zip(c1, c2)]
+        out = VoxelGrid(max_dims=self._max_dims)
+        for (x, y, z), idx in self._cells.items():
+            if lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1] and lo[2] <= z <= hi[2]:
+                out.place(x, y, z, self._palette[idx], self._provenance.get(idx))
+        return out
 
     def bounds(self) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
         """Inclusive ``((minx, miny, minz), (maxx, maxy, maxz))`` bbox.

@@ -4,7 +4,6 @@ import pytest
 
 from mcbuilder.blocks import canonicalize, parse, suggest
 
-
 # -- parse ------------------------------------------------------------
 
 

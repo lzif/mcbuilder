@@ -79,16 +79,16 @@ def _main():
         # Inward-facing stair edges
         # z=1 row (facing south)
         for x in range(1, 4):
-            BUILD.set(x, 1, 1, f"minecraft:stone_brick_stairs[facing=south,half=bottom]")
+            BUILD.set(x, 1, 1, "minecraft:stone_brick_stairs[facing=south,half=bottom]")
         # z=3 row (facing north)
         for x in range(1, 4):
-            BUILD.set(x, 1, 3, f"minecraft:stone_brick_stairs[facing=north,half=bottom]")
+            BUILD.set(x, 1, 3, "minecraft:stone_brick_stairs[facing=north,half=bottom]")
         # x=1 column (facing east)
         for z in range(1, 4):
-            BUILD.set(1, 1, z, f"minecraft:stone_brick_stairs[facing=east,half=bottom]")
+            BUILD.set(1, 1, z, "minecraft:stone_brick_stairs[facing=east,half=bottom]")
         # x=3 column (facing west)
         for z in range(1, 4):
-            BUILD.set(3, 1, z, f"minecraft:stone_brick_stairs[facing=west,half=bottom]")
+            BUILD.set(3, 1, z, "minecraft:stone_brick_stairs[facing=west,half=bottom]")
         # Corner accents on the step
         BUILD.set(1, 1, 1, CHISELED_SB)  # front-left
         BUILD.set(3, 1, 1, CHISELED_SB)  # front-right
@@ -99,12 +99,12 @@ def _main():
         BUILD.set(2, 2, 2, POLISHED_AND)
         BUILD.set(3, 2, 2, CHISELED_SB)  # X+
         BUILD.set(1, 2, 2, CHISELED_SB)  # X-
-        BUILD.set(2, 2, 3, MOSSY_SB)      # Z+
-        BUILD.set(2, 2, 1, CRACKED_SB)    # Z-
-        BUILD.set(3, 2, 3, MOSSY_SB)      # diagonal
-        BUILD.set(3, 2, 1, CRACKED_SB)    # diagonal
-        BUILD.set(1, 2, 3, CRACKED_SB)    # diagonal
-        BUILD.set(1, 2, 1, MOSSY_SB)      # diagonal
+        BUILD.set(2, 2, 3, MOSSY_SB)  # Z+
+        BUILD.set(2, 2, 1, CRACKED_SB)  # Z-
+        BUILD.set(3, 2, 3, MOSSY_SB)  # diagonal
+        BUILD.set(3, 2, 1, CRACKED_SB)  # diagonal
+        BUILD.set(1, 2, 3, CRACKED_SB)  # diagonal
+        BUILD.set(1, 2, 1, MOSSY_SB)  # diagonal
 
         # lostqol:waystone at (2,3,2)
         BUILD.set(2, 3, 2, WAYSTONE)

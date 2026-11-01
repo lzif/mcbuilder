@@ -54,6 +54,8 @@ _CLIENT_PREFIXES = (
     "assets/minecraft/blockstates/",
     "assets/minecraft/textures/entity/",
 )
+
+
 def _client_cache_complete(client_dir: Path) -> bool:
     """True iff every extracted-asset subtree is present and non-empty.
 
@@ -194,9 +196,7 @@ def _fetch_registry(version: str, dest: Path, *, force: bool = False) -> None:
     try:
         blocks = normalize_block_data(raw)
     except (ValueError, KeyError, TypeError) as exc:
-        raise AssetError(
-            f"registry payload for {version!r} had an unexpected shape: {exc}"
-        )
+        raise AssetError(f"registry payload for {version!r} had an unexpected shape: {exc}")
     payload = {"version": version, "layout": layout, "blocks": blocks}
     target.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -225,9 +225,7 @@ def _fetch_client(version: str, dest: Path, *, force: bool = False) -> None:
         manifest = json.loads(body)
     except json.JSONDecodeError as exc:
         raise AssetError(f"could not parse the Piston version manifest: {exc}")
-    entry = next(
-        (v for v in manifest.get("versions", []) if v.get("id") == version), None
-    )
+    entry = next((v for v in manifest.get("versions", []) if v.get("id") == version), None)
     if entry is None:
         raise AssetError(
             f"version {version!r} not found in Mojang's version manifest — "
@@ -238,23 +236,19 @@ def _fetch_client(version: str, dest: Path, *, force: bool = False) -> None:
     status, body = _http_get(entry["url"])
     if status != 200:
         raise AssetError(
-            f"could not fetch the Piston version metadata for {version!r} "
-            f"(HTTP {status})."
+            f"could not fetch the Piston version metadata for {version!r} (HTTP {status})."
         )
     try:
         client = json.loads(body)["downloads"]["client"]
         jar_url, sha1 = client["url"], client["sha1"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise AssetError(
-            f"Piston metadata for {version!r} has no usable downloads.client "
-            f"entry: {exc}"
+            f"Piston metadata for {version!r} has no usable downloads.client entry: {exc}"
         )
 
     status, jar_bytes = _http_get(jar_url)
     if status != 200:
-        raise AssetError(
-            f"could not download the client jar for {version!r} (HTTP {status})."
-        )
+        raise AssetError(f"could not download the client jar for {version!r} (HTTP {status}).")
     if hashlib.sha1(jar_bytes).hexdigest() != sha1.lower():
         raise AssetError(
             f"client jar for {version!r} failed sha1 verification — "
@@ -263,9 +257,7 @@ def _fetch_client(version: str, dest: Path, *, force: bool = False) -> None:
     try:
         with zipfile.ZipFile(io.BytesIO(jar_bytes)) as zf:
             members = [
-                n
-                for n in zf.namelist()
-                if n.startswith(_CLIENT_PREFIXES) and not n.endswith("/")
+                n for n in zf.namelist() if n.startswith(_CLIENT_PREFIXES) and not n.endswith("/")
             ]
             if not members:
                 raise AssetError(
@@ -279,9 +271,7 @@ def _fetch_client(version: str, dest: Path, *, force: bool = False) -> None:
             if "version.json" in zf.namelist():
                 _safe_extract(zf, ["version.json"], dest)
     except zipfile.BadZipFile as exc:
-        raise AssetError(
-            f"downloaded client jar for {version!r} is not a valid zip: {exc}"
-        )
+        raise AssetError(f"downloaded client jar for {version!r} is not a valid zip: {exc}")
 
 
 def fetch(version: str, cache_dir: Path, *, force: bool = False) -> Path:

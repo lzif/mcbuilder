@@ -37,9 +37,7 @@ def _read_back(path):
     for e in f["palette"]:
         name = str(e["Name"])
         props = e.get("Properties")
-        pal.append(
-            (name, {str(k): str(v) for k, v in props.items()} if props else {})
-        )
+        pal.append((name, {str(k): str(v) for k, v in props.items()} if props else {}))
     cells = {}
     for be in f["blocks"]:
         pos = tuple(int(v) for v in be["pos"])
@@ -72,13 +70,12 @@ def _expected_cells(grid):
 # gates
 # ---------------------------------------------------------------------------
 
+
 def test_roundtrip_blockstate_equality(tmp_path):
     """Write -> read back -> blockstate-equality per cell (not index-equality)."""
     grid = _sample_grid()
     out = tmp_path / "hut.nbt"
-    warnings = export_nbt_mod.write_structure_nbt(
-        grid, out, data_version=4189, include_air=False
-    )
+    warnings = export_nbt_mod.write_structure_nbt(grid, out, data_version=4189, air="none")
     assert warnings == []
     _root, _pal, cells = _read_back(out)
     assert cells == _expected_cells(grid)
@@ -133,18 +130,17 @@ def test_structurenbt_compatibility(tmp_path):
     assert len(blocks) == len(_expected_cells(grid))
 
 
-def test_include_air_writes_unset_cells(tmp_path):
+def test_air_all_writes_unset_cells(tmp_path):
     grid = _sample_grid()
     out = tmp_path / "hut.nbt"
-    export_nbt_mod.write_structure_nbt(grid, out, data_version=4189,
-                                       include_air=True)
+    export_nbt_mod.write_structure_nbt(grid, out, data_version=4189, air="all")
     _root, _pal, cells = _read_back(out)
     # every bbox cell is present now (3*3*3), unset ones as air
     assert len(cells) == 27
     assert voxels_mod.AIR in cells.values()
 
 
-def test_include_air_explicit_writes_only_carved_air(tmp_path):
+def test_air_explicit_writes_only_placed_air(tmp_path):
     """'explicit': carved air is written, unset bbox cells stay void.
 
     The underwater-base case: the interior air pocket must displace ocean
@@ -152,8 +148,7 @@ def test_include_air_explicit_writes_only_carved_air(tmp_path):
     """
     grid = _sample_grid()
     out = tmp_path / "hut.nbt"
-    export_nbt_mod.write_structure_nbt(grid, out, data_version=4189,
-                                       include_air="explicit")
+    export_nbt_mod.write_structure_nbt(grid, out, data_version=4189, air="explicit")
     _root, _pal, cells = _read_back(out)
     # 18 box cells (one of them carved air) + 1 stair; the 8 unset cells
     # of the 3x3x3 bbox's top layer are NOT written
@@ -162,16 +157,17 @@ def test_include_air_explicit_writes_only_carved_air(tmp_path):
     assert [p for p, b in cells.items() if b == voxels_mod.AIR] == [(0, 0, 0)]
 
 
-def test_include_air_rejects_unknown_mode(tmp_path):
+def test_air_rejects_unknown_mode(tmp_path):
     with pytest.raises(export_nbt_mod.ExportError):
         export_nbt_mod.write_structure_nbt(
-            _sample_grid(), tmp_path / "x.nbt", data_version=4189,
-            include_air="sometimes")
+            _sample_grid(), tmp_path / "x.nbt", data_version=4189, air="sometimes"
+        )
 
 
 # ---------------------------------------------------------------------------
 # DataVersion resolution
 # ---------------------------------------------------------------------------
+
 
 def test_data_version_table():
     assert export_nbt_mod.resolve_data_version("26.2") == 4903
@@ -179,9 +175,7 @@ def test_data_version_table():
 
 
 def test_data_version_prefers_version_json(tmp_path):
-    (tmp_path / "version.json").write_text(
-        json.dumps({"world_version": 9999}), encoding="utf-8"
-    )
+    (tmp_path / "version.json").write_text(json.dumps({"world_version": 9999}), encoding="utf-8")
     assert export_nbt_mod.resolve_data_version("26.2", tmp_path) == 9999
 
 
@@ -193,6 +187,7 @@ def test_data_version_unknown_raises():
 # ---------------------------------------------------------------------------
 # edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_determinism(tmp_path):
     """Same grid -> byte-identical file."""
@@ -206,9 +201,7 @@ def test_determinism(tmp_path):
 def test_empty_grid_raises(tmp_path):
     b = build_mod.Build(seed=1)
     with pytest.raises(export_nbt_mod.ExportError, match="empty"):
-        export_nbt_mod.write_structure_nbt(
-            b.grid, tmp_path / "empty.nbt", data_version=4189
-        )
+        export_nbt_mod.write_structure_nbt(b.grid, tmp_path / "empty.nbt", data_version=4189)
 
 
 def test_block_entity_nbt_stripped_with_warning(tmp_path):
@@ -216,9 +209,7 @@ def test_block_entity_nbt_stripped_with_warning(tmp_path):
     with b:
         b.set(0, 0, 0, "minecraft:chest{Items:[]}")
     out = tmp_path / "chest.nbt"
-    warnings = export_nbt_mod.write_structure_nbt(
-        b.grid, out, data_version=4189
-    )
+    warnings = export_nbt_mod.write_structure_nbt(b.grid, out, data_version=4189)
     assert len(warnings) == 1 and "block-entity NBT" in warnings[0]
     f = nbtlib.load(str(out), gzipped=True)
     assert str(f["palette"][0]["Name"]) == "minecraft:chest"

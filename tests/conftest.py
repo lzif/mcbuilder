@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 # fake assets
 # ---------------------------------------------------------------------------
 
+
 def _write_json(path: Path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj), encoding="utf-8")
@@ -49,134 +50,193 @@ def make_assets(root: Path) -> Path:
     _write_tex(tex_dir / "test_planks.png", (150, 100, 50))
 
     # Base stair geometry: slab + tall element at +X (east half).
-    _write_json(models_dir / "test_stairs_base.json", {
-        "textures": {"side": "minecraft:block/test_planks",
-                     "top": "minecraft:block/test_planks",
-                     "bottom": "minecraft:block/test_planks"},
-        "elements": [
-            {"from": [0, 0, 0], "to": [16, 8, 16],
-             "faces": {
-                 "up": {"uv": [0, 0, 16, 16], "texture": "#top"},
-                 "down": {"uv": [0, 0, 16, 16], "texture": "#bottom"},
-                 "north": {"uv": [0, 8, 16, 16], "texture": "#side"},
-                 "south": {"uv": [0, 8, 16, 16], "texture": "#side"},
-                 "west": {"uv": [0, 8, 16, 16], "texture": "#side"},
-                 "east": {"uv": [0, 8, 16, 16], "texture": "#side"},
-             }},
-            {"from": [8, 8, 0], "to": [16, 16, 16],
-             "faces": {
-                 "up": {"uv": [8, 0, 16, 16], "texture": "#top"},
-                 "north": {"uv": [0, 0, 8, 8], "texture": "#side"},
-                 "south": {"uv": [8, 0, 16, 8], "texture": "#side"},
-                 "west": {"uv": [0, 0, 16, 8], "texture": "#side"},
-                 "east": {"uv": [0, 0, 16, 8], "texture": "#side"},
-             }},
-        ],
-    })
-    _write_json(models_dir / "test_stairs.json", {
-        "parent": "minecraft:block/test_stairs_base",
-    })
-    _write_json(bs_dir / "test_stairs.json", {
-        "variants": {
-            "facing=east": {"model": "minecraft:block/test_stairs"},
-            "facing=south": {"model": "minecraft:block/test_stairs",
-                             "y": 90},
-            "facing=west": {"model": "minecraft:block/test_stairs",
-                            "y": 180},
-            "facing=north": {"model": "minecraft:block/test_stairs",
-                             "y": 270},
-            "facing=east,half=top": {"model": "minecraft:block/test_stairs",
-                                     "x": 180},
-        }
-    })
+    _write_json(
+        models_dir / "test_stairs_base.json",
+        {
+            "textures": {
+                "side": "minecraft:block/test_planks",
+                "top": "minecraft:block/test_planks",
+                "bottom": "minecraft:block/test_planks",
+            },
+            "elements": [
+                {
+                    "from": [0, 0, 0],
+                    "to": [16, 8, 16],
+                    "faces": {
+                        "up": {"uv": [0, 0, 16, 16], "texture": "#top"},
+                        "down": {"uv": [0, 0, 16, 16], "texture": "#bottom"},
+                        "north": {"uv": [0, 8, 16, 16], "texture": "#side"},
+                        "south": {"uv": [0, 8, 16, 16], "texture": "#side"},
+                        "west": {"uv": [0, 8, 16, 16], "texture": "#side"},
+                        "east": {"uv": [0, 8, 16, 16], "texture": "#side"},
+                    },
+                },
+                {
+                    "from": [8, 8, 0],
+                    "to": [16, 16, 16],
+                    "faces": {
+                        "up": {"uv": [8, 0, 16, 16], "texture": "#top"},
+                        "north": {"uv": [0, 0, 8, 8], "texture": "#side"},
+                        "south": {"uv": [8, 0, 16, 8], "texture": "#side"},
+                        "west": {"uv": [0, 0, 16, 8], "texture": "#side"},
+                        "east": {"uv": [0, 0, 16, 8], "texture": "#side"},
+                    },
+                },
+            ],
+        },
+    )
+    _write_json(
+        models_dir / "test_stairs.json",
+        {
+            "parent": "minecraft:block/test_stairs_base",
+        },
+    )
+    _write_json(
+        bs_dir / "test_stairs.json",
+        {
+            "variants": {
+                "facing=east": {"model": "minecraft:block/test_stairs"},
+                "facing=south": {"model": "minecraft:block/test_stairs", "y": 90},
+                "facing=west": {"model": "minecraft:block/test_stairs", "y": 180},
+                "facing=north": {"model": "minecraft:block/test_stairs", "y": 270},
+                "facing=east,half=top": {"model": "minecraft:block/test_stairs", "x": 180},
+            }
+        },
+    )
 
     # Multipart block: two cases, one conditional.
     _write_tex(tex_dir / "test_post.png", (100, 100, 100))
-    _write_json(models_dir / "test_post.json", {
-        "textures": {"all": "minecraft:block/test_post"},
-        "elements": [
-            {"from": [6, 0, 6], "to": [10, 16, 10],
-             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
-                       for f in ("up", "down", "north", "south",
-                                 "west", "east")}},
-        ],
-    })
-    _write_json(models_dir / "test_arm.json", {
-        "textures": {"all": "minecraft:block/test_post"},
-        "elements": [
-            {"from": [10, 6, 6], "to": [16, 10, 10],
-             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
-                       for f in ("up", "down", "north", "south",
-                                 "west", "east")}},
-        ],
-    })
-    _write_json(bs_dir / "test_multi.json", {
-        "multipart": [
-            {"apply": {"model": "minecraft:block/test_post"}},
-            {"when": {"arm": "true"},
-             "apply": {"model": "minecraft:block/test_arm"}},
-            {"when": {"OR": [{"arm": "false"}, {"arm": "maybe"}]},
-             "apply": {"model": "minecraft:block/test_post"}},
-        ]
-    })
+    _write_json(
+        models_dir / "test_post.json",
+        {
+            "textures": {"all": "minecraft:block/test_post"},
+            "elements": [
+                {
+                    "from": [6, 0, 6],
+                    "to": [10, 16, 10],
+                    "faces": {
+                        f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                        for f in ("up", "down", "north", "south", "west", "east")
+                    },
+                },
+            ],
+        },
+    )
+    _write_json(
+        models_dir / "test_arm.json",
+        {
+            "textures": {"all": "minecraft:block/test_post"},
+            "elements": [
+                {
+                    "from": [10, 6, 6],
+                    "to": [16, 10, 10],
+                    "faces": {
+                        f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                        for f in ("up", "down", "north", "south", "west", "east")
+                    },
+                },
+            ],
+        },
+    )
+    _write_json(
+        bs_dir / "test_multi.json",
+        {
+            "multipart": [
+                {"apply": {"model": "minecraft:block/test_post"}},
+                {"when": {"arm": "true"}, "apply": {"model": "minecraft:block/test_arm"}},
+                {
+                    "when": {"OR": [{"arm": "false"}, {"arm": "maybe"}]},
+                    "apply": {"model": "minecraft:block/test_post"},
+                },
+            ]
+        },
+    )
     # -- wall-like multipart (wall rendering gap): value-domain gate ------
     # Mirrors the vanilla wall convention: directional arms select on
     # low/tall, center post on up=true. The gate in
     # preview_faithful._is_wall_block requires the n/s/e/w when-values
     # ⊆ {low, tall, false} with low/tall present.
     _write_tex(tex_dir / "test_wall.png", (110, 110, 110))
-    _write_json(models_dir / "test_wall_post.json", {
-        "textures": {"all": "minecraft:block/test_wall"},
-        "elements": [
-            {"from": [6, 0, 6], "to": [10, 16, 10],
-             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
-                       for f in ("up", "down", "north", "south",
-                                 "west", "east")}},
-        ],
-    })
-    _write_json(models_dir / "test_wall_side.json", {
-        "textures": {"all": "minecraft:block/test_wall"},
-        "elements": [
-            {"from": [6, 6, 0], "to": [10, 12, 6],
-             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
-                       for f in ("up", "down", "north", "south",
-                                 "west", "east")}},
-        ],
-    })
-    _write_json(models_dir / "test_wall_side_tall.json", {
-        "textures": {"all": "minecraft:block/test_wall"},
-        "elements": [
-            {"from": [6, 0, 0], "to": [10, 16, 6],
-             "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
-                       for f in ("up", "down", "north", "south",
-                                 "west", "east")}},
-        ],
-    })
-    _write_json(bs_dir / "test_wall.json", {
-        "multipart": [
-            {"when": {"up": "true"},
-             "apply": {"model": "test:block/test_wall_post"}},
-            {"when": {"north": "low"},
-             "apply": {"model": "test:block/test_wall_side"}},
-            {"when": {"east": "low"},
-             "apply": {"model": "test:block/test_wall_side", "y": 90}},
-            {"when": {"south": "low"},
-             "apply": {"model": "test:block/test_wall_side", "y": 180}},
-            {"when": {"west": "low"},
-             "apply": {"model": "test:block/test_wall_side", "y": 270}},
-            {"when": {"north": "tall"},
-             "apply": {"model": "test:block/test_wall_side_tall"}},
-            {"when": {"east": "tall"},
-             "apply": {"model": "test:block/test_wall_side_tall",
-                       "y": 90}},
-            {"when": {"south": "tall"},
-             "apply": {"model": "test:block/test_wall_side_tall",
-                       "y": 180}},
-            {"when": {"west": "tall"},
-             "apply": {"model": "test:block/test_wall_side_tall",
-                       "y": 270}},
-        ]
-    })
+    _write_json(
+        models_dir / "test_wall_post.json",
+        {
+            "textures": {"all": "minecraft:block/test_wall"},
+            "elements": [
+                {
+                    "from": [6, 0, 6],
+                    "to": [10, 16, 10],
+                    "faces": {
+                        f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                        for f in ("up", "down", "north", "south", "west", "east")
+                    },
+                },
+            ],
+        },
+    )
+    _write_json(
+        models_dir / "test_wall_side.json",
+        {
+            "textures": {"all": "minecraft:block/test_wall"},
+            "elements": [
+                {
+                    "from": [6, 6, 0],
+                    "to": [10, 12, 6],
+                    "faces": {
+                        f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                        for f in ("up", "down", "north", "south", "west", "east")
+                    },
+                },
+            ],
+        },
+    )
+    _write_json(
+        models_dir / "test_wall_side_tall.json",
+        {
+            "textures": {"all": "minecraft:block/test_wall"},
+            "elements": [
+                {
+                    "from": [6, 0, 0],
+                    "to": [10, 16, 6],
+                    "faces": {
+                        f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                        for f in ("up", "down", "north", "south", "west", "east")
+                    },
+                },
+            ],
+        },
+    )
+    _write_json(
+        bs_dir / "test_wall.json",
+        {
+            "multipart": [
+                {"when": {"up": "true"}, "apply": {"model": "test:block/test_wall_post"}},
+                {"when": {"north": "low"}, "apply": {"model": "test:block/test_wall_side"}},
+                {"when": {"east": "low"}, "apply": {"model": "test:block/test_wall_side", "y": 90}},
+                {
+                    "when": {"south": "low"},
+                    "apply": {"model": "test:block/test_wall_side", "y": 180},
+                },
+                {
+                    "when": {"west": "low"},
+                    "apply": {"model": "test:block/test_wall_side", "y": 270},
+                },
+                {"when": {"north": "tall"}, "apply": {"model": "test:block/test_wall_side_tall"}},
+                {
+                    "when": {"east": "tall"},
+                    "apply": {"model": "test:block/test_wall_side_tall", "y": 90},
+                },
+                {
+                    "when": {"south": "tall"},
+                    "apply": {"model": "test:block/test_wall_side_tall", "y": 180},
+                },
+                {
+                    "when": {"west": "tall"},
+                    "apply": {"model": "test:block/test_wall_side_tall", "y": 270},
+                },
+            ]
+        },
+    )
+
     # (leaves analog for the wall-connect v0 divergence test is added
     # after _cube_model is defined, below.)
     # -- biome-tint fakes (gap1): solid-color textures, hermetic ----------
@@ -191,17 +251,26 @@ def make_assets(root: Path) -> Path:
 
     def _cube_model(name, tex_var, tex_color, tintindex):
         _write_tex(tex_dir / f"{tex_var}.png", tex_color)
-        _write_json(models_dir / f"{name}.json", {
-            "parent": "minecraft:block/cube_all",
-            "textures": {"all": f"test:block/{tex_var}"},
-            "elements": [
-                {"from": [0, 0, 0], "to": [16, 16, 16],
-                 "faces": _full_cube_faces("#all", tintindex)},
-            ],
-        })
-        _write_json(bs_dir / f"{name}.json", {
-            "variants": {"": {"model": f"test:block/{name}"}},
-        })
+        _write_json(
+            models_dir / f"{name}.json",
+            {
+                "parent": "minecraft:block/cube_all",
+                "textures": {"all": f"test:block/{tex_var}"},
+                "elements": [
+                    {
+                        "from": [0, 0, 0],
+                        "to": [16, 16, 16],
+                        "faces": _full_cube_faces("#all", tintindex),
+                    },
+                ],
+            },
+        )
+        _write_json(
+            bs_dir / f"{name}.json",
+            {
+                "variants": {"": {"model": f"test:block/{name}"}},
+            },
+        )
 
     # leaves analog: tintindex 0, table entry injected per-test.
     _cube_model("test_tint_cube", "tint_gray", (200, 200, 200), 0)
@@ -209,27 +278,38 @@ def make_assets(root: Path) -> Path:
     # leaves exception (test:test_leaves).
     _cube_model("test_leaves", "tint_leaves", (130, 160, 110), None)
     # same texture file, different block (per-block table lookup pin).
-    _write_json(bs_dir / "test_tint_cube_b.json", {
-        "variants": {"": {"model": "test:block/test_tint_cube"}},
-    })
+    _write_json(
+        bs_dir / "test_tint_cube_b.json",
+        {
+            "variants": {"": {"model": "test:block/test_tint_cube"}},
+        },
+    )
     # wildflowers/flowerbed analog: tintindex 1 must still tint.
     _cube_model("test_tint_index1", "tint_gray1", (170, 170, 170), 1)
     # cherry-leaves analog: tintindex 0 inherited from parent, but the
     # block itself has no table entry -> default-deny, untinted.
     _write_tex(tex_dir / "tint_cherry.png", (180, 140, 140))
-    _write_json(models_dir / "test_tint_cherry_parent.json", {
-        "textures": {"all": "test:block/tint_cherry"},
-        "elements": [
-            {"from": [0, 0, 0], "to": [16, 16, 16],
-             "faces": _full_cube_faces("#all", 0)},
-        ],
-    })
-    _write_json(models_dir / "test_tint_cherry.json", {
-        "parent": "test:block/test_tint_cherry_parent",
-    })
-    _write_json(bs_dir / "test_tint_cherry.json", {
-        "variants": {"": {"model": "test:block/test_tint_cherry"}},
-    })
+    _write_json(
+        models_dir / "test_tint_cherry_parent.json",
+        {
+            "textures": {"all": "test:block/tint_cherry"},
+            "elements": [
+                {"from": [0, 0, 0], "to": [16, 16, 16], "faces": _full_cube_faces("#all", 0)},
+            ],
+        },
+    )
+    _write_json(
+        models_dir / "test_tint_cherry.json",
+        {
+            "parent": "test:block/test_tint_cherry_parent",
+        },
+    )
+    _write_json(
+        bs_dir / "test_tint_cherry.json",
+        {
+            "variants": {"": {"model": "test:block/test_tint_cherry"}},
+        },
+    )
     # untinted control: real texture, no tintindex, no table entry.
     _cube_model("test_tint_plain", "tint_plain", (120, 120, 120), None)
 
@@ -237,49 +317,71 @@ def make_assets(root: Path) -> Path:
     # element 1 north = tinted #overlay -> two world-north quads.
     _write_tex(tex_dir / "tint_side.png", (210, 210, 210))
     _write_tex(tex_dir / "tint_overlay.png", (160, 160, 160))
-    _write_json(models_dir / "test_tint_overlay.json", {
-        "textures": {"side": "test:block/tint_side",
-                     "overlay": "test:block/tint_overlay"},
-        "elements": [
-            {"from": [0, 0, 0], "to": [16, 16, 16],
-             "faces": {"north": {"uv": [0, 0, 16, 16],
-                                 "texture": "#side"}}},
-            {"from": [0, 0, 0], "to": [16, 16, 16],
-             "faces": {"north": {"uv": [0, 0, 16, 16],
-                                 "texture": "#overlay",
-                                 "tintindex": 0}}},
-        ],
-    })
-    _write_json(bs_dir / "test_tint_overlay.json", {
-        "variants": {"": {"model": "test:block/test_tint_overlay"}},
-    })
+    _write_json(
+        models_dir / "test_tint_overlay.json",
+        {
+            "textures": {"side": "test:block/tint_side", "overlay": "test:block/tint_overlay"},
+            "elements": [
+                {
+                    "from": [0, 0, 0],
+                    "to": [16, 16, 16],
+                    "faces": {"north": {"uv": [0, 0, 16, 16], "texture": "#side"}},
+                },
+                {
+                    "from": [0, 0, 0],
+                    "to": [16, 16, 16],
+                    "faces": {
+                        "north": {"uv": [0, 0, 16, 16], "texture": "#overlay", "tintindex": 0}
+                    },
+                },
+            ],
+        },
+    )
+    _write_json(
+        bs_dir / "test_tint_overlay.json",
+        {
+            "variants": {"": {"model": "test:block/test_tint_overlay"}},
+        },
+    )
 
     # bamboo analog: first apply untinted (stalk), second apply tinted
     # (leaves) — fast tier resolves only the first apply.
     _cube_model("test_stalk", "tint_stalk", (140, 140, 140), None)
     _cube_model("test_leaf", "tint_leaf", (150, 150, 150), 0)
-    _write_json(bs_dir / "test_tint_multi.json", {
-        "multipart": [
-            {"apply": {"model": "test:block/test_stalk"}},
-            {"apply": {"model": "test:block/test_leaf"}},
-        ],
-    })
+    _write_json(
+        bs_dir / "test_tint_multi.json",
+        {
+            "multipart": [
+                {"apply": {"model": "test:block/test_stalk"}},
+                {"apply": {"model": "test:block/test_leaf"}},
+            ],
+        },
+    )
 
     # -- smooth-lighting fakes (gap2): hermetic AO classifier fixtures ----
-    def _gap2_block(name, tex_file, element_from=(0, 0, 0),
-                    element_to=(16, 16, 16)):
-        _write_json(models_dir / f"{name}.json", {
-            "textures": {"all": f"minecraft:block/{tex_file}"},
-            "elements": [
-                {"from": list(element_from), "to": list(element_to),
-                 "faces": {f: {"uv": [0, 0, 16, 16], "texture": "#all"}
-                           for f in ("up", "down", "north", "south",
-                                     "west", "east")}},
-            ],
-        })
-        _write_json(bs_dir / f"{name}.json", {
-            "variants": {"": {"model": f"minecraft:block/{name}"}},
-        })
+    def _gap2_block(name, tex_file, element_from=(0, 0, 0), element_to=(16, 16, 16)):
+        _write_json(
+            models_dir / f"{name}.json",
+            {
+                "textures": {"all": f"minecraft:block/{tex_file}"},
+                "elements": [
+                    {
+                        "from": list(element_from),
+                        "to": list(element_to),
+                        "faces": {
+                            f: {"uv": [0, 0, 16, 16], "texture": "#all"}
+                            for f in ("up", "down", "north", "south", "west", "east")
+                        },
+                    },
+                ],
+            },
+        )
+        _write_json(
+            bs_dir / f"{name}.json",
+            {
+                "variants": {"": {"model": f"minecraft:block/{name}"}},
+            },
+        )
 
     # full opaque cube, uniform mid-gray (render-level AO tests)
     _write_tex(tex_dir / "ao_cube.png", (128, 128, 128))
@@ -289,8 +391,7 @@ def make_assets(root: Path) -> Path:
     _gap2_block("test_glass", "ao_glass")
     # half slab -> partial -> non-occluding
     _write_tex(tex_dir / "ao_slab.png", (128, 128, 128))
-    _gap2_block("test_slab", "ao_slab",
-                element_from=(0, 0, 0), element_to=(16, 8, 16))
+    _gap2_block("test_slab", "ao_slab", element_from=(0, 0, 0), element_to=(16, 8, 16))
     # leaves: transparent texture but the name ends with "leaves" ->
     # occluding (vanilla treats leaves as opaque cubes for AO)
     _write_tex_rgba(tex_dir / "ao_leaves.png", (60, 140, 60, 128))

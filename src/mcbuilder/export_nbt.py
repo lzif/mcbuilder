@@ -6,22 +6,17 @@ a gzipped root compound with ``DataVersion``, ``size``, ``palette`` and
 entities are out of scope (the validator only syntax-checks block-entity
 NBT, and the known consumer can't read them either).
 
-Known consumer: LostQoL's ``StructureNbt`` parser
-(``plugins-src/lostqol/.../waystone/StructureNbt.kt``) reads exactly this
-shape from plugin resources — ``palette`` entries with ``Name`` (+ optional
-``Properties``), ``blocks`` entries with ``pos``/``state``, ``size`` — and
-skips air. The writer mirrors the reference implementation
-(``paper-server/docs/make_waystone_v8.py``): ``pos`` and ``size`` are
-TAG_List of TAG_Int (never TAG_Int_Array — that breaks both the plugin
-parser and ``StructureManager.loadStructure``).
+``pos`` and ``size`` are TAG_List of TAG_Int (never TAG_Int_Array, which
+``StructureManager.loadStructure`` and most parsers reject). The file loads
+in a structure block, Litematica and server-side structure pasters.
 
 Coordinate mapping: ``pos`` is ``[x, y, z]`` offsets from the bbox
 minimum, ``size`` is ``[sx, sy, sz]`` — matching ``VoxelGrid.to_dense``,
 whose array axis 0/1/2 is x/y/z.
 
-Air handling (``include_air``):
+Air handling (``air``):
 
-- ``False`` / ``"none"`` (default): neither unset cells nor carved-air
+- ``"none"`` (default): neither unset cells nor carved-air
   cells appear in ``blocks`` (air may still sit in the palette,
   unreferenced — vanilla-faithful). Pasting leaves whatever was there.
 - ``"explicit"``: only cells explicitly set to ``minecraft:air`` are
@@ -29,7 +24,7 @@ Air handling (``include_air``):
   displace the world *inside* the structure without touching what's
   *around* it — e.g. an underwater base whose interior air pocket must
   push out ocean water while the surrounding ocean stays wet.
-- ``True`` / ``"all"``: every cell in the bbox is written; unset cells
+- ``"all"``: every cell in the bbox is written; unset cells
   become air (clears the whole bounding box on paste).
 
 Determinism: palette order follows grid insertion order, ``blocks`` are
@@ -119,25 +114,11 @@ def _palette_entry(canonical: str) -> tuple[Compound, str | None]:
         )
     entry = Compound({"Name": String(name)})
     if props:
-        entry["Properties"] = Compound(
-            {k: String(v) for k, v in sorted(props.items())}
-        )
+        entry["Properties"] = Compound({k: String(v) for k, v in sorted(props.items())})
     return entry, warning
 
 
 AIR_MODES = ("none", "explicit", "all")
-
-
-def _air_mode(include_air) -> str:
-    if include_air is False or include_air is None:
-        return "none"
-    if include_air is True:
-        return "all"
-    if include_air in AIR_MODES:
-        return include_air
-    raise ExportError(
-        f"include_air must be one of {AIR_MODES} (or a bool), "
-        f"got {include_air!r}")
 
 
 def write_structure_nbt(
@@ -145,17 +126,18 @@ def write_structure_nbt(
     path: Path | str,
     *,
     data_version: int,
-    include_air: bool | str = False,
+    air: str = "none",
 ) -> list[str]:
     """Write ``grid`` as a gzipped vanilla structure ``.nbt`` file.
 
-    ``include_air``: ``False``/``"none"``, ``"explicit"`` or
-    ``True``/``"all"`` — see the module docstring.
+    ``air``: ``"none"``, ``"explicit"`` or ``"all"``; see the module docstring.
 
     Returns a list of warning strings (block-entity NBT dropped, ...).
     Raises :class:`ExportError` on an empty grid.
     """
-    air_mode = _air_mode(include_air)
+    if air not in AIR_MODES:
+        raise ExportError(f"air must be one of {AIR_MODES}, got {air!r}")
+    air_mode = air
     arr, palette, _provenance = grid.to_dense()
     if arr.size == 0:
         raise ExportError("build is empty — nothing to export")
