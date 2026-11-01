@@ -55,9 +55,7 @@ def make_fake_jar() -> bytes:
         zf.writestr("assets/minecraft/textures/block/stone.png", b"\x89PNG\r\n\x1a\n")
         # One file per _CLIENT_PREFIXES entry: the cache-completeness
         # guard requires every prefix subtree to be non-empty.
-        zf.writestr(
-            "assets/minecraft/textures/entity/chest/normal.png", b"\x89PNG\r\n\x1a\n"
-        )
+        zf.writestr("assets/minecraft/textures/entity/chest/normal.png", b"\x89PNG\r\n\x1a\n")
         # Must NOT be extracted:
         zf.writestr("META-INF/MANIFEST.MF", b"junk")
         zf.writestr("assets/minecraft/textures/item/stick.png", b"junk")
@@ -80,9 +78,7 @@ def fake_http_factory(
         if url.endswith("/data/pc/26.1/blocks.json"):
             return 200, json.dumps(raw_blocks).encode()
         if url == PISTON_MANIFEST:
-            versions = [
-                {"id": vid, "url": VERSION_JSON_URL} for vid in manifest_ids
-            ]
+            versions = [{"id": vid, "url": VERSION_JSON_URL} for vid in manifest_ids]
             return 200, json.dumps({"versions": versions}).encode()
         if url == VERSION_JSON_URL:
             return 200, json.dumps(
@@ -202,32 +198,26 @@ def test_fetch_is_idempotent(tmp_path, monkeypatch):
 
 def test_fetch_raises_when_version_not_in_minecraft_data(tmp_path, monkeypatch):
     jar_bytes = make_fake_jar()
-    monkeypatch.setattr(
-        assets, "_http_get", fake_http_factory(jar_bytes, data_paths={"pc": {}})
-    )
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(jar_bytes, data_paths={"pc": {}}))
     with pytest.raises(AssetError, match="not in PrismarineJS/minecraft-data yet"):
         fetch("26.2", tmp_path)
 
 
 def test_fetch_raises_when_version_not_in_piston(tmp_path, monkeypatch):
     jar_bytes = make_fake_jar()
-    monkeypatch.setattr(
-        assets, "_http_get", fake_http_factory(jar_bytes, manifest_ids=())
-    )
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(jar_bytes, manifest_ids=()))
     with pytest.raises(AssetError, match="not found in Mojang's version manifest"):
         fetch("26.2", tmp_path)
 
 
 def test_fetch_rejects_corrupt_jar(tmp_path, monkeypatch):
     jar_bytes = make_fake_jar()
-    monkeypatch.setattr(
-        assets, "_http_get", fake_http_factory(jar_bytes, corrupt_jar=True)
-    )
+    monkeypatch.setattr(assets, "_http_get", fake_http_factory(jar_bytes, corrupt_jar=True))
     with pytest.raises(AssetError, match="sha1 verification"):
         fetch("26.2", tmp_path)
 
 
-# ------------------------------------------------- finding 9
+# -------------------------------------------------
 
 
 def test_fetch_refetches_when_a_prefix_is_missing(tmp_path, monkeypatch):
@@ -239,8 +229,7 @@ def test_fetch_refetches_when_a_prefix_is_missing(tmp_path, monkeypatch):
     # Simulate the pre-entity-prefix cache: drop the entity subtree.
     import shutil
 
-    shutil.rmtree(tmp_path / "26.2" / "client" / "assets" / "minecraft"
-                  / "textures" / "entity")
+    shutil.rmtree(tmp_path / "26.2" / "client" / "assets" / "minecraft" / "textures" / "entity")
 
     calls = []
     real_fake = fake_http_factory(jar_bytes)
@@ -254,8 +243,7 @@ def test_fetch_refetches_when_a_prefix_is_missing(tmp_path, monkeypatch):
     assert any(u == CLIENT_JAR_URL for u in calls), (
         "stale cache (entity prefix missing) did not re-fetch the client jar"
     )
-    assert (tmp_path / "26.2" / "client" / "assets" / "minecraft"
-            / "textures" / "entity").is_dir()
+    assert (tmp_path / "26.2" / "client" / "assets" / "minecraft" / "textures" / "entity").is_dir()
 
 
 def test_fetch_force_redownloads_complete_cache(tmp_path, monkeypatch):
@@ -272,17 +260,13 @@ def test_fetch_force_redownloads_complete_cache(tmp_path, monkeypatch):
 
     monkeypatch.setattr(assets, "_http_get", counting_fake)
     fetch("26.2", tmp_path, force=True)
-    assert any(u == CLIENT_JAR_URL for u in calls), (
-        "--force did not re-download the client jar"
-    )
+    assert any(u == CLIENT_JAR_URL for u in calls), "--force did not re-download the client jar"
 
 
 def test_maybe_configure_proxy_never_clobbers_user_proxy(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://user-proxy:8080")
     # Even if the sandbox proxy resolves, the user's proxy wins.
-    monkeypatch.setattr(
-        assets.socket, "getaddrinfo", lambda *a, **k: [("ok",)]
-    )
+    monkeypatch.setattr(assets.socket, "getaddrinfo", lambda *a, **k: [("ok",)])
     assets._maybe_configure_proxy()
     assert __import__("os").environ["HTTPS_PROXY"] == "http://user-proxy:8080"
 

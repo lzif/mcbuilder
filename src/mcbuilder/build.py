@@ -1,623 +1,231 @@
-"""Builder DSL: the agent-facing construction API.
+"""``Build``: the object a builder script fills with blocks.
 
-A builder script defines a module-level ``BUILD`` and places blocks
-inside the required ``with BUILD:`` batch scope::
+A builder script defines a module-level ``BUILD`` and places blocks inside
+a ``with BUILD:`` block::
 
     import mcbuilder as mb
 
-    BUILD = mb.Build(seed=7, views=["orbit:8_el:25", "top"])
+    BUILD = mb.Build(seed=7)
 
     with BUILD:
-        BUILD.box((0, 0, 0), (9, 3, 9), "minecraft:stone_bricks")
-        BUILD.walls((0, 4, 0), (9, 7, 9), "minecraft:mossy_stone_bricks")
+        BUILD.box((0, 0, 0), (8, 0, 6), "minecraft:cobblestone")
+        BUILD.walls((0, 1, 0), (8, 4, 6), "minecraft:oak_planks")
+        BUILD.roof_gable((-1, 5, -1), (9, 5, 7), "minecraft:spruce_stairs", ridge="x")
 
-Direction convention (no silent inference): ``box``, ``walls`` and
-``floor`` place the block string *verbatim* — no axis or facing is ever
-guessed. Only helpers whose geometry implies a direction
-(``roof_gable`` here; the parts catalog elsewhere) compute one, and each
-documents its rule in its docstring.
+Placement methods:
 
-Determinism: ``Build(seed=...)`` is the sole RNG source, exposed as
-:meth:`Build.rng`. Same script + same seed gives the same grid.
+- :meth:`Build.set`, :meth:`Build.carve`, :meth:`Build.place` — the primitives.
+- Every shape in :mod:`mcbuilder.shapes` (``box``, ``walls``, ``pillar``,
+  ``line``, ``stairs``, ``cylinder``, ``sphere``, ``cone``,
+  ``roof_gable``, ``roof_hip``) is also a method with the same
+  arguments. It places the shape and returns the placed
+  :class:`~mcbuilder.geometry.Geometry`, so ``geo.bounds()`` tells you
+  exactly what landed.
+
+Blocks are placed verbatim: nothing ever guesses ``facing`` or ``axis``
+except shapes whose geometry implies it (stairs, roofs), and those say so.
+
+Determinism: ``seed`` drives every random choice (``BUILD.rng()`` and
+weighted palettes), so the same script and seed always give the same build.
 """
 
 from __future__ import annotations
 
-import math
+import functools
 import os
 import random
 import sys
 
-from mcbuilder.blocks import canonicalize, parse, resolve_material
+from mcbuilder import shapes as _shapes
+from mcbuilder.blocks import canonicalize
 from mcbuilder.errors import McbuilderError
 from mcbuilder.geometry import Geometry
+from mcbuilder.materials import Material, resolve_material
 from mcbuilder.rotation import _check_rotation, _rotate_point, rotate_blockstate
 from mcbuilder.voxels import AIR, VoxelGrid
 
+__all__ = ["Build", "BuildError"]
+
 
 class BuildError(McbuilderError):
-    """Misuse of the Build DSL: placements outside ``with BUILD:``, bad helper args."""
+    """Misuse of the Build API (placing outside ``with BUILD:``, bad arguments)."""
 
 
 _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def _is_internal(filename: str) -> bool:
-    return os.path.abspath(filename).startswith(_PACKAGE_DIR + os.sep)
-
-
 def _caller_provenance() -> tuple[str, int] | None:
     """``(filename, lineno)`` of the first stack frame outside this package.
 
-    Skips every frame whose file lives inside the ``mcbuilder`` package
-    (so helper/parts layers don't shadow the agent's script line).
-    ``None`` when no external frame exists.
+    Errors then point at the line of the user's script, not at library code.
     """
     frame = sys._getframe(1)
     try:
         while frame is not None:
-            filename = frame.f_code.co_filename
-            if not _is_internal(filename):
-                return (filename, frame.f_lineno)
+            filename = os.path.abspath(frame.f_code.co_filename)
+            if not filename.startswith(_PACKAGE_DIR + os.sep):
+                return (frame.f_code.co_filename, frame.f_lineno)
             frame = frame.f_back
     finally:
         del frame
     return None
 
 
-def _corners(
-    c1: tuple[int, int, int], c2: tuple[int, int, int]
-) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
-    """Validate two corners and return ``((minx, miny, minz), (maxx, maxy, maxz))``."""
+def _ints(what: str, p) -> tuple[int, int, int]:
     try:
-        (x1, y1, z1), (x2, y2, z2) = tuple(c1), tuple(c2)  # type: ignore[misc]
+        x, y, z = p
     except (TypeError, ValueError):
-        raise BuildError(f"corners must each be 3 ints, got {c1!r} and {c2!r}")
-    for v in (x1, y1, z1, x2, y2, z2):
+        raise BuildError(f"{what} must be 3 ints, got {p!r}")
+    for v in (x, y, z):
         if isinstance(v, bool) or not isinstance(v, int):
-            raise BuildError(f"corner coordinates must be ints, got {v!r}")
-    return (min(x1, x2), min(y1, y2), min(z1, z2)), (max(x1, x2), max(y1, y2), max(z1, z2))
-
-
-def _emit(name: str, props: dict[str, str], nbt: str | None) -> str:
-    out = name
-    if props:
-        out += "[" + ",".join(f"{k}={props[k]}" for k in sorted(props)) + "]"
-    if nbt:
-        out += nbt
-    # Full canonical form (props AND NBT keys sorted): identical blockstates
-    # must yield identical palette keys no matter which helper placed them.
-    return canonicalize(out)
-
-
-def _round_half_up(v: float) -> int:
-    return math.floor(v + 0.5)
+            raise BuildError(f"{what} coordinates must be ints, got {p!r}")
+    return x, y, z
 
 
 class Build:
-    """Accumulates a voxel build. Placements require the ``with BUILD:`` scope."""
+    """A voxel build. Placements must happen inside ``with BUILD:``.
+
+    Args:
+        seed: drives ``rng()`` and weighted palette picks.
+        views: default preview views, e.g. ``["iso", "az135_el025", "top"]``.
+        max_dimensions: size limit per axis; exceeding it raises
+            :class:`~mcbuilder.voxels.GridBoundsError`.
+    """
 
     def __init__(
-        self,
-        seed=None,
-        views=None,
-        max_dimensions: tuple[int, int, int] = (256, 256, 256),
+        self, seed=None, views=None, max_dimensions: tuple[int, int, int] = (256, 256, 256)
     ):
         self._seed = seed
         self._rng = random.Random(seed)
         self._grid = VoxelGrid(max_dims=max_dimensions)
-        self._batch_depth = 0
-        self._views_config = None
+        self._depth = 0
+        self._views = None
         if views is not None:
             self.set_views(views)
 
-    # -- batch scope -----------------------------------------------------
+    # -- scope -----------------------------------------------------------
 
-    def __enter__(self) -> "Build":
-        self._batch_depth += 1
+    def __enter__(self) -> Build:
+        self._depth += 1
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        # Close the batch. Nothing is validated here — registry validation
-        # happens once per batch exit at the CLI/harness layer.
-        if self._batch_depth > 0:
-            self._batch_depth -= 1
+        self._depth = max(0, self._depth - 1)
         return False
 
-    def _require_batch(self) -> None:
-        if self._batch_depth == 0:
+    def _require_scope(self) -> None:
+        if self._depth == 0:
             raise BuildError("placements must be inside `with BUILD:`")
 
-    # -- fundamental primitive -------------------------------------------
+    # -- primitives --------------------------------------------------------
 
-    def set(self, x: int, y: int, z: int, block: str) -> None:
-        """Place one block. Overwrites: last write wins.
+    def set(self, x: int, y: int, z: int, block: Material) -> None:
+        """Place one block (any material spec). Last write wins.
 
-        ``"minecraft:air"`` is legal (carving). The block string is
-        canonicalized immediately (``ValueError`` on malformed input);
-        registry validation happens later, once per batch exit.
-
-        Provenance (``file:line`` of the calling script) is captured per
-        palette entry, first placement wins.
+        ``"minecraft:air"`` places explicit air: it is exported with
+        ``--air explicit`` and clears whatever the structure is pasted into.
         """
-        canonical = canonicalize(block)
-        self._place(x, y, z, canonical, _caller_provenance())
-
-    def _place(
-        self,
-        x: int,
-        y: int,
-        z: int,
-        canonical: str,
-        provenance: tuple[str, int] | None,
-    ) -> None:
-        self._require_batch()
-        self._grid.place(x, y, z, canonical, provenance)
-
-    # -- massing helpers (verbatim placement, no direction inference) ----
-
-    def box(
-        self, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str
-    ) -> Geometry:
-        """Fill the box between corners ``c1`` and ``c2`` (inclusive, any order).
-
-        The block string is placed verbatim — no axis/facing guessing.
-        ``block`` also accepts a material spec (weighted palette or
-        ``(x, y, z) -> str`` callable); see
-        :func:`mcbuilder.blocks.resolve_material`.
-
-        Output bounds: ``(|dx| + 1) × (|dy| + 1) × (|dz| + 1)`` cells.
-
-        Returns the placed :class:`Geometry` (absolute coordinates), so
-        ``geo.bounds()`` reports the exact footprint — size whatever you
-        build next around it (e.g. a chimney through a roof).
-        """
-        (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
-        plain = isinstance(block, str)
-        if plain:
-            block = canonicalize(block)
-        geo = Geometry()
-        for x in range(x1, x2 + 1):
-            for y in range(y1, y2 + 1):
-                for z in range(z1, z2 + 1):
-                    geo.set(x, y, z, block if plain
-                            else resolve_material(block, x, y, z, self._seed))
-        self.place(geo, at=(0, 0, 0))
-        return geo
-
-    def walls(
-        self, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str
-    ) -> Geometry:
-        """Hollow box walls between corners (inclusive, any order).
-
-        Places the four vertical walls spanning the full height. No floor
-        and no ceiling — use :meth:`box` for those. Verbatim placement;
-        ``block`` accepts a material spec (see :meth:`box`).
-
-        Output bounds: same XZ footprint as :meth:`box`, full Y range.
-
-        Returns the placed :class:`Geometry` (absolute coordinates).
-        """
-        (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
-        plain = isinstance(block, str)
-        if plain:
-            block = canonicalize(block)
-        geo = Geometry()
-
-        def _put(x, y, z):
-            geo.set(x, y, z, block if plain
-                    else resolve_material(block, x, y, z, self._seed))
-
-        for y in range(y1, y2 + 1):
-            for z in range(z1, z2 + 1):
-                _put(x1, y, z)
-                _put(x2, y, z)
-            for x in range(x1 + 1, x2):
-                _put(x, y, z1)
-                _put(x, y, z2)
-        self.place(geo, at=(0, 0, 0))
-        return geo
-
-    def floor(
-        self, c1: tuple[int, int, int], c2: tuple[int, int, int], block: str
-    ) -> Geometry:
-        """One-block-thick slab at the lower Y of the two corners, spanning
-        the XZ rectangle.
-
-        Documented alias: ``box`` with height 1. Readability sugar for
-        agents; placement is verbatim.
-
-        Output bounds: XZ footprint of the corners, 1 thick, at
-        ``min(c1.y, c2.y)``.
-
-        Returns the placed :class:`Geometry` (absolute coordinates).
-        """
-        (x1, y1, z1), (x2, _y2, z2) = _corners(c1, c2)
-        return self.box((x1, y1, z1), (x2, y1, z2), block)
-
-    def carve(self, c1: tuple[int, int, int], c2: tuple[int, int, int]) -> None:
-        """Remove every cell in the box between corners ``c1`` and ``c2``.
-
-        The exact complement of :meth:`box`: corners are inclusive and
-        may be given in any order (same ``_corners`` semantics —
-        ``(|dx| + 1) × (|dy| + 1) × (|dz| + 1)`` cells removed).
-
-        Removed cells read as *unset* — ``UNSET`` in
-        :meth:`mcbuilder.voxels.VoxelGrid.to_dense`, ``None`` from
-        :meth:`get`. That differs from carving with :meth:`set` and
-        ``"minecraft:air"``, which leaves a carved *air cell* that the
-        exporter can include via ``include_air``.
-
-        Carving a region with no placed cells is a no-op. Must be called
-        inside ``with BUILD:``.
-        """
-        (x1, y1, z1), (x2, y2, z2) = _corners(c1, c2)
-        self._require_batch()
-        cells = self._grid._cells
-        for x in range(x1, x2 + 1):
-            for y in range(y1, y2 + 1):
-                for z in range(z1, z2 + 1):
-                    cells.pop((x, y, z), None)
-
-    # -- direction-computing helper --------------------------------------
-
-    def roof_gable(
-        self,
-        c1: tuple[int, int, int],
-        c2: tuple[int, int, int],
-        block: str,
-        ridge: str,
-        eave_height: int | None = None,
-    ) -> Geometry:
-        """Gable roof of stairs ascending from both eaves to a ridge line.
-
-        ``ridge`` is required (``"x"`` or ``"z"``, no default): the axis
-        the ridge line runs along. The roof footprint is the XZ rectangle
-        of the corners.
-
-        ``eave_height`` is the Y of the eave row (the lowest stair row).
-        When omitted (the default ``None``) it is inferred as
-        ``min(c1.y, c2.y)`` — the corners' Y only sets where the eaves
-        sit, exactly as before, so omitting it is fully backward
-        compatible. Pass it explicitly to decouple the roof's eave height
-        from the corners' Y (e.g. when the corners mark a footprint at
-        some other Y).
-
-        Output bounds: the XZ footprint of the corners, rising
-        ``ceil(span / 2)`` blocks above the eave height, where ``span``
-        is the footprint extent perpendicular to the ridge (the Z extent
-        for ``ridge="x"``, the X extent for ``ridge="z"``). E.g. a 5-deep
-        span rises 3 blocks; a 6-deep span rises 3 blocks with no ridge
-        row.
-
-        Facing rule (computed from geometry, documented here): each row's
-        ``facing`` points toward the ridge, i.e. uphill — the tall back
-        sits on the high side so every slope reads as a staircase
-        climbing to the ridge, matching vanilla. For ``ridge="x"`` the
-        eaves are at the Z extremes: north-eave rows (ascending
-        southward) face ``south``, south-eave rows face ``north``. For
-        ``ridge="z"``: west-eave rows face ``east``, east-eave rows face
-        ``west``. The ridge row of an odd-span roof keeps facing the
-        min-side eave, so it reads as the top step of the max-side slope.
-
-        ``block`` should be a stair block *without* a ``facing`` property
-        (passing one is a :class:`BuildError` — the facing is computed,
-        never merged). ``half`` defaults to ``bottom`` when absent; all
-        other properties and NBT pass through verbatim. ``block`` also
-        accepts a material spec (each cell resolves independently, then
-        gets its computed facing merged in).
-
-        Note on preview appearance: each row's tall back faces uphill
-        toward the next row up, so consecutive rows interlock with no
-        see-through gap — the same closed geometry as a hand-built
-        vanilla roof. (An earlier version of this helper faced rows
-        downhill, which left real 0.5-block notches; that was a bug,
-        fixed in #4.)
-
-        Returns the placed :class:`Geometry` (absolute coordinates), so
-        ``geo.bounds()`` reports the exact roof footprint and peak —
-        size a chimney (or anything else) around it.
-        """
-        if ridge not in ("x", "z"):
-            raise BuildError(f"roof_gable: ridge must be 'x' or 'z', got {ridge!r}")
-        plain = isinstance(block, str)
-        if plain:
-            pname, pprops, pnbt = parse(block)  # ValueError on malformed
-            if "facing" in pprops:
-                raise BuildError(
-                    "roof_gable computes 'facing' from the roof geometry; "
-                    "pass the stair block without a facing property"
-                )
-            pprops = dict(pprops)
-            pprops.setdefault("half", "bottom")
-
-        def _stair(x, y, z, facing):
-            # Per-cell stair string: `block` may be a material spec, in
-            # which case each cell resolves (then parses) independently.
-            if plain:
-                name, props, nbt = pname, pprops, pnbt
-            else:
-                s = resolve_material(block, x, y, z, self._seed)
-                name, props, nbt = parse(s)
-                if "facing" in props:
-                    raise BuildError(
-                        "roof_gable computes 'facing' from the roof geometry; "
-                        "pass the stair block without a facing property"
-                    )
-                props = dict(props)
-                props.setdefault("half", "bottom")
-            return _emit(name, {**props, "facing": facing}, nbt)
-        (x1, y1, z1), (x2, _y2, z2) = _corners(c1, c2)
-        if eave_height is None:
-            eave = y1
-        elif isinstance(eave_height, bool) or not isinstance(eave_height, int):
-            raise BuildError(
-                f"roof_gable: eave_height must be an int, got {eave_height!r}"
-            )
-        else:
-            eave = eave_height
-        if ridge == "x":
-            span_lo, span_hi = z1, z2
-            run_lo, run_hi = x1, x2
-            eave_lo, eave_hi = "north", "south"
-        else:
-            span_lo, span_hi = x1, x2
-            run_lo, run_hi = z1, z2
-            eave_lo, eave_hi = "west", "east"
-        span = span_hi - span_lo + 1
-        pairs = span // 2
-        geo = Geometry()
-        for k in range(pairs):
-            y = eave + k
-            for r in range(run_lo, run_hi + 1):
-                if ridge == "x":
-                    geo.set(r, y, span_lo + k,
-                            _stair(r, y, span_lo + k, eave_hi))
-                    geo.set(r, y, span_hi - k,
-                            _stair(r, y, span_hi - k, eave_lo))
-                else:
-                    geo.set(span_lo + k, y, r,
-                            _stair(span_lo + k, y, r, eave_hi))
-                    geo.set(span_hi - k, y, r,
-                            _stair(span_hi - k, y, r, eave_lo))
-        if span % 2 == 1:
-            y = eave + pairs
-            c = span_lo + pairs
-            for r in range(run_lo, run_hi + 1):
-                if ridge == "x":
-                    geo.set(r, y, c, _stair(r, y, c, eave_lo))
-                else:
-                    geo.set(c, y, r, _stair(c, y, r, eave_lo))
-        self.place(geo, at=(0, 0, 0))
-        return geo
-
-    # -- instancing: stamp Geometry datablocks (Steal #1) ----------------
-
-    def place(self, geometry, *, at: tuple[int, int, int],
-              rotation: str = "NONE") -> Geometry:
-        """Stamp a :class:`mcbuilder.geometry.Geometry` into the grid.
-
-        Every relative cell ``(dx, dy, dz)`` of the geometry lands at
-        ``(at_x + dx, at_y + dy, at_z + dz)``. Last write wins on overlap
-        (same rule as :meth:`set`). The geometry is never mutated — one
-        instance can be stamped many times.
-
-        ``rotation`` (default ``"NONE"``) rotates the geometry's relative
-        cells about its origin ``(0, 0, 0)`` before stamping — positions
-        per :func:`mcbuilder.rotation._rotate_point`, blockstates per
-        :func:`mcbuilder.rotation.rotate_blockstate`. Equivalent to
-        ``place(geometry.rotate(rotation), at=at)``.
-
-        This is the op-layer counterpart to the datablock layer
-        (``mcbuilder.part.*`` factories): define once, stamp many, with
-        explicit coordinates every time (no ``bpy.context``-style
-        implicit placement state — the ``at`` keyword has no default).
-
-        Must be called inside ``with BUILD:``. Provenance for all
-        stamped cells is the script line calling ``place``.
-
-        Returns the stamped geometry (handy for chaining: the one-shot
-        helpers are all built on this).
-        """
-        self._require_batch()
-        if not isinstance(geometry, Geometry):
-            raise BuildError(
-                f"place: expected a mcbuilder.geometry.Geometry, "
-                f"got {type(geometry).__name__}"
-            )
-        _check_rotation(rotation)
-        try:
-            ax, ay, az = at
-        except (TypeError, ValueError):
-            raise BuildError(f"place: at must be 3 ints, got {at!r}")
-        for v in (ax, ay, az):
-            if isinstance(v, bool) or not isinstance(v, int):
-                raise BuildError(f"place: at coordinates must be ints, got {v!r}")
-        provenance = _caller_provenance()
-        cells = geometry.cells()
-        if rotation != "NONE":
-            rotated = []
-            for dx, dy, dz, canonical in cells:
-                rdx, rdz = _rotate_point(dx, dz, 0, 0, rotation)
-                rotated.append(
-                    (rdx, dy, rdz, rotate_blockstate(canonical, rotation)))
-            cells = rotated
-        for dx, dy, dz, canonical in cells:
-            self._grid.place(ax + dx, ay + dy, az + dz, canonical, provenance)
-        return geometry
-
-    # -- parts catalog (PLAN section 4, v0.1) ----------------------------------
-
-    def stairs_run(
-        self, start, direction, length=None, block=None, width=1, *, target=None
-    ) -> Geometry:
-        """Straight staircase ascending towards ``direction``.
-
-        Thin delegate to :func:`mcbuilder.parts.stairs_run`. Must be
-        called inside ``with BUILD:``.
-
-        Facing rule (computed by the part, never hand-guessed): each
-        step gets ``facing`` = the ascent direction and ``half=bottom``
-        — ascending north places ``facing=north``, tall back uphill.
-
-        Give exactly one of ``length`` / ``target`` (``ValueError`` if
-        both or neither). ``target`` is the absolute (x, y, z) the TOP
-        step must occupy; the length is derived as
-        ``target_y - start_y + 1``. ``ValueError`` if the target isn't
-        reachable along ``direction`` from ``start``.
-
-        Output bounds: step ``i`` sits at ``start`` + ``i`` toward
-        ``direction`` and ``start_y + i`` up (``i`` in ``0..length-1``);
-        ``width`` widens perpendicular toward the positive side.
-
-        Returns the placed :class:`Geometry` (absolute coordinates).
-        """
-        from mcbuilder import parts
-
-        return parts.stairs_run(
-            self, start, direction, length, block, width=width, target=target
+        self._require_scope()
+        self._grid.place(
+            x, y, z, resolve_material(block, x, y, z, self._seed), _caller_provenance()
         )
 
-    def pillar(self, base, height, block) -> Geometry:
-        """Vertical column of ``height`` blocks. Delegate to
-        :func:`mcbuilder.parts.pillar`. Must be called inside ``with BUILD:``.
+    def carve(self, c1: tuple[int, int, int], c2: tuple[int, int, int]) -> None:
+        """Remove every placed cell in the box ``c1``–``c2`` (inclusive).
 
-        Output bounds: 1 × ``height`` × 1 at ``base`` (up from ``base.y``).
-
-        Returns the placed :class:`Geometry` (absolute coordinates).
+        Removed cells become *unset*: they are not exported, so pasting
+        leaves the world untouched there. To force air, use
+        ``box(c1, c2, "minecraft:air")`` instead.
         """
-        from mcbuilder import parts
+        self._require_scope()
+        (x1, y1, z1), (x2, y2, z2) = (_ints("carve: c1", c1), _ints("carve: c2", c2))
+        cells = self._grid._cells
+        for x in range(min(x1, x2), max(x1, x2) + 1):
+            for y in range(min(y1, y2), max(y1, y2) + 1):
+                for z in range(min(z1, z2), max(z1, z2) + 1):
+                    cells.pop((x, y, z), None)
 
-        return parts.pillar(self, base, height, block)
+    def place(
+        self, geometry: Geometry, *, at: tuple[int, int, int] = (0, 0, 0), rotation: str = "NONE"
+    ) -> Geometry:
+        """Stamp ``geometry`` with its origin at ``at``. Returns what was placed.
 
-    def railing(self, start, end, block) -> Geometry:
-        """Straight horizontal run of blocks. Delegate to
-        :func:`mcbuilder.parts.railing`. Must be called inside ``with BUILD:``.
-
-        Output bounds: the straight run from ``start`` to ``end``
-        inclusive (axis-aligned).
-
-        Returns the placed :class:`Geometry` (absolute coordinates).
+        ``rotation`` (``"NONE"``, ``"CLOCKWISE_90"``, ``"CLOCKWISE_180"``,
+        ``"COUNTERCLOCKWISE_90"``) turns the geometry about its origin
+        first; ``facing``/``axis`` and friends rotate with it. The returned
+        geometry is in absolute coordinates.
         """
-        from mcbuilder import parts
-
-        return parts.railing(self, start, end, block)
-
-    # -- curved / vector primitives (finding 6) --------------------------
-
-    def cylinder(self, center, radius, height, block, hollow=False) -> Geometry:
-        """Vertical cylinder ``height`` levels up from ``center``.
-
-        ``block`` accepts a material spec (see :meth:`box`). Returns the
-        placed :class:`Geometry` (absolute coordinates).
-        """
-        from mcbuilder import part as part_mod
-
-        geo = part_mod.cylinder(
-            center=center, radius=radius, height=height, block=block,
-            hollow=hollow, seed=self._seed)
-        self.place(geo, at=(0, 0, 0))
-        return geo
-
-    def sphere(self, center, radius, block, hollow=False, dome=False,
-               thickness=1) -> Geometry:
-        """Sphere of ``radius`` around ``center`` (``dome`` = upper half).
-
-        ``block`` accepts a material spec (see :meth:`box`). Returns the
-        placed :class:`Geometry` (absolute coordinates).
-        """
-        from mcbuilder import part as part_mod
-
-        geo = part_mod.sphere(
-            center=center, radius=radius, block=block, hollow=hollow,
-            dome=dome, thickness=thickness, seed=self._seed)
-        self.place(geo, at=(0, 0, 0))
-        return geo
-
-    def cone(self, center, radius, height, block, hollow=False) -> Geometry:
-        """Cone tapering from a base disc of ``radius`` at ``center``.
-
-        ``block`` accepts a material spec (see :meth:`box`). Returns the
-        placed :class:`Geometry` (absolute coordinates).
-        """
-        from mcbuilder import part as part_mod
-
-        geo = part_mod.cone(
-            center=center, radius=radius, height=height, block=block,
-            hollow=hollow, seed=self._seed)
-        self.place(geo, at=(0, 0, 0))
-        return geo
-
-    def line(self, p1, p2, block) -> Geometry:
-        """6-connected straight line from ``p1`` to ``p2`` (inclusive).
-
-        ``block`` accepts a material spec (see :meth:`box`). Returns the
-        placed :class:`Geometry` (absolute coordinates).
-        """
-        from mcbuilder import part as part_mod
-
-        geo = part_mod.line(p1=p1, p2=p2, block=block, seed=self._seed)
-        self.place(geo, at=(0, 0, 0))
-        return geo
-
-    # -- post-processing --------------------------------------------------
+        self._require_scope()
+        if not isinstance(geometry, Geometry):
+            raise BuildError(f"place: expected a Geometry, got {type(geometry).__name__}")
+        _check_rotation(rotation)
+        ax, ay, az = _ints("place: at", at)
+        provenance = _caller_provenance()
+        placed = Geometry()
+        for dx, dy, dz, block in geometry.cells():
+            if rotation != "NONE":
+                dx, dz = _rotate_point(dx, dz, 0, 0, rotation)
+                block = rotate_blockstate(block, rotation)
+            x, y, z = ax + dx, ay + dy, az + dz
+            self._grid.place(x, y, z, block, provenance)
+            placed._cells.append((x, y, z, block))
+        return placed
 
     def recenter(self) -> None:
-        """Shift the grid so the bbox center (XZ only; Y untouched) sits at origin.
-
-        Mutates in place. Call after placements, before render/export.
-        The center is rounded to the nearest voxel (half up); an empty
-        grid is a no-op.
-        """
+        """Shift the build so its XZ bounding-box center is at the origin (Y unchanged)."""
         bb = self._grid.bounds()
         if bb is None:
             return
-        (minx, _miny, minz), (maxx, _maxy, maxz) = bb
-        dx = -_round_half_up((minx + maxx) / 2)
-        dz = -_round_half_up((minz + maxz) / 2)
-        self._grid._shift(dx, 0, dz)
+        (minx, _, minz), (maxx, _, maxz) = bb
+        self._grid._shift(-((minx + maxx + 1) // 2), 0, -((minz + maxz + 1) // 2))
 
-    # -- config / introspection -------------------------------------------
+    # -- reading the build back -------------------------------------------
+
+    def get(self, x: int, y: int, z: int) -> str | None:
+        """Canonical block at ``(x, y, z)``; ``None`` if unset or air."""
+        idx = self._grid._cells.get((x, y, z))
+        if idx is None:
+            return None
+        block = self._grid._palette[idx]
+        return None if block == AIR else block
+
+    def count(self, block: str) -> int:
+        """Number of cells holding exactly ``block`` (property order ignored)."""
+        canonical = canonicalize(block)
+        palette = self._grid._palette
+        return sum(1 for idx in self._grid._cells.values() if palette[idx] == canonical)
+
+    def find(self, block: str) -> list[tuple[int, int, int]]:
+        """Sorted coordinates of every cell holding exactly ``block``."""
+        canonical = canonicalize(block)
+        palette = self._grid._palette
+        return sorted(p for p, idx in self._grid._cells.items() if palette[idx] == canonical)
+
+    def bounds(self):
+        """``((minx, miny, minz), (maxx, maxy, maxz))`` of placed cells, or ``None``."""
+        return self._grid.bounds()
+
+    # -- randomness and config ---------------------------------------------
 
     def rng(self, namespace: str | None = None) -> random.Random:
-        """RNG for this build.
+        """Seeded random generator.
 
-        ``rng()`` (no namespace) returns the build's shared stream, seeded
-        from ``seed`` — the historical behavior. ``rng(namespace)`` returns
-        a FRESH independent stream deterministically seeded from
-        ``(seed, namespace)``, so edits to one script section never
-        perturb another section's draws (the shared stream shifts every
-        downstream draw when an earlier loop's iteration count changes,
-        which used to cascade false-positive ``mcbuild diff`` noise).
-
-        The seed string is hashed by ``random`` itself (stable across
-        processes — unlike builtin ``hash()``, which is salted per
-        process). Each call returns a new stream at the same start
-        position: ``rng("walls")`` twice gives two identical streams,
-        never a shared-advancing one — that order-independence is the
-        point. Namespace must be a string (``TypeError`` otherwise).
+        ``rng()`` is one shared stream. ``rng("roof")`` is an independent
+        stream for that name: editing one part of a script then doesn't
+        reshuffle the random choices of every other part.
         """
         if namespace is None:
             return self._rng
         if not isinstance(namespace, str):
-            raise BuildError(
-                f"rng: namespace must be a string, got {namespace!r}"
-            )
+            raise BuildError(f"rng: namespace must be a string, got {namespace!r}")
         return random.Random(f"{self._seed}\x00{namespace}")
 
     def set_views(self, views) -> None:
-        """Store view configuration. Pure config — no side effects.
-
-        Stored raw (a list of ``View`` objects or shorthand strings) and
-        normalized downstream by the CLI / render harness. A bare string
-        is treated as a single spec, never exploded into characters.
-        """
+        """Default preview views (a spec string or a list of view tokens)."""
         if views is None:
-            self._views_config = None
+            self._views = None
             return
-        if isinstance(views, str):
-            views = [views]
-        self._views_config = list(views)
+        self._views = [views] if isinstance(views, str) else list(views)
 
     @property
     def grid(self) -> VoxelGrid:
@@ -629,124 +237,76 @@ class Build:
 
     @property
     def views_config(self):
-        return self._views_config
+        return self._views
 
-    def get(self, x: int, y: int, z: int) -> str | None:
-        """The canonical block string at ``(x, y, z)``, or ``None``.
-
-        Returns the block string exactly as stored in the palette
-        (e.g. ``"minecraft:oak_stairs[facing=north]"`` — canonical form,
-        properties sorted). Returns ``None`` both when the cell was
-        never placed *and* when it holds carved ``"minecraft:air"`` —
-        there is no observable "empty" block to report.
-
-        Read-only: works outside ``with BUILD:``.
-        """
-        idx = self._grid._cells.get((x, y, z))
-        if idx is None:
-            return None
-        block = self._grid._palette[idx]
-        return None if block == AIR else block
-
-    def count(self, block: str) -> int:
-        """Number of cells whose block string equals ``block``.
-
-        ``block`` is canonicalized first (``ValueError`` on malformed
-        input), then matched exactly against stored palette entries —
-        property order never matters, but the property *set* must match
-        verbatim: ``"minecraft:oak_stairs[facing=north]"`` does not
-        match a cell holding ``"...[facing=north,half=top]"``.
-
-        Read-only: works outside ``with BUILD:``.
-        """
-        canonical = canonicalize(block)
-        palette = self._grid._palette
-        return sum(1 for idx in self._grid._cells.values() if palette[idx] == canonical)
-
-    def find(self, block: str) -> list[tuple[int, int, int]]:
-        """Coordinates of every cell holding ``block``, sorted.
-
-        Same matching rule as :meth:`count`: ``block`` is canonicalized,
-        then matched exactly. Returns a list of ``(x, y, z)`` tuples in
-        ascending ``(x, y, z)`` order (deterministic), or ``[]`` when no
-        cell matches.
-
-        Read-only: works outside ``with BUILD:``.
-        """
-        canonical = canonicalize(block)
-        palette = self._grid._palette
-        return sorted(
-            (x, y, z)
-            for (x, y, z), idx in self._grid._cells.items()
-            if palette[idx] == canonical
-        )
+    # -- validation and rendering ------------------------------------------
 
     def validate(self, registry, allowlist=()) -> tuple[list[dict], list[dict]]:
-        """Validate this build's palette against a versioned registry.
-
-        The CLI calls this once per run; direct library/harness users call
-        it explicitly. It is deliberately NOT run implicitly at ``__exit__``:
-        leaving the batch scope cannot assume a registry is available.
-        Returns the ``(errors, warnings)`` pair from ``registry.validate``.
-        """
+        """Check every block against ``registry``. Returns ``(errors, warnings)``."""
         _, palette, _ = self._grid.to_dense()
         return registry.validate(palette, allowlist=allowlist)
 
-    def render(self, out_dir, views=None, assets_dir=None, tier="fast",
-               presentation=True, title=None) -> list:
-        """Render preview PNGs to ``out_dir``. Returns ordered ``list[Path]``.
+    def render(
+        self,
+        out_dir,
+        views=None,
+        *,
+        tier: str = "faithful",
+        region=None,
+        assets_dir=None,
+        title=None,
+        presentation: bool = True,
+    ) -> list:
+        """Render preview PNGs into ``out_dir``; returns the file paths.
 
-        ``tier`` selects the renderer: ``"fast"`` (textured cubes,
-        directions untrusted), ``"trusted"`` (PLAN §3 direction-trusted
-        tier — orientation-truthful simplified geometry, no textures), or
-        ``"faithful"`` (vanilla model geometry + textures, directions
-        trusted).
-
-        ``presentation`` and ``title`` apply to the faithful tier only:
-        ``presentation=True`` (default) is the Shadow Court look (light
-        background, soft shadow, no debug chrome).
-
-        The harness path (PLAN rev 7, section 6): same views produce the same
-        files as the CLI's ``previews/`` dir, in the same order as the
-        report's views array. View precedence: the explicit ``views``
-        argument > this build's ``views_config`` (``Build(views=...)`` /
-        ``set_views``) > the default 9-view set. ``views`` may be a list of
-        ``View`` objects, a list of shorthand strings, or a single
-        semicolon-separated spec string.
+        Args:
+            views: view spec (defaults to this build's views, then the
+                standard 9-view orbit). See :mod:`mcbuilder.render.views`.
+            tier: ``"faithful"`` (real models + textures), ``"fast"``
+                (textured cubes) or ``"trusted"`` (orientation check).
+            region: ``((x0, y0, z0), (x1, y1, z1))`` to render only that
+                box — a close-up of one part of a large build.
+            presentation: faithful tier only; ``False`` gives the plain
+                debug look (dark background, labels).
         """
-        from mcbuilder import preview as preview_mod
-        from mcbuilder import preview_trusted as trusted_mod
-        from mcbuilder import preview_faithful as faithful_mod
-        from mcbuilder import views as views_mod
+        from mcbuilder.config import McbuildConfig
+        from mcbuilder.render import faithful, fast, trusted
+        from mcbuilder.render import views as views_mod
 
         if tier not in ("fast", "trusted", "faithful"):
-            raise BuildError(
-                f"render: tier must be 'fast', 'trusted' or 'faithful', "
-                f"got {tier!r}"
-            )
+            raise BuildError(f"render: tier must be 'fast', 'trusted' or 'faithful', got {tier!r}")
         if assets_dir is None:
-            # Same discovery as the CLI: fall back to the versioned asset
-            # cache instead of silently rendering everything magenta.
-            from mcbuilder.config import McbuildConfig
             assets_dir = McbuildConfig().resolve_assets_dir()
-        view_list = self._resolve_render_views(views, views_mod)
+        view_list = views_mod.resolve(views if views is not None else self._views)
+        grid = self._grid
+        if region is not None:
+            c1, c2 = region
+            grid = grid.crop(_ints("render: region", c1), _ints("render: region", c2))
         if tier == "faithful":
-            return list(faithful_mod.render(
-                self._grid, out_dir, view_list, assets_dir,
-                presentation=presentation, title=title))
-        mod = trusted_mod if tier == "trusted" else preview_mod
-        return list(mod.render(self._grid, out_dir, view_list, assets_dir))
+            return list(
+                faithful.render(
+                    grid, out_dir, view_list, assets_dir, presentation=presentation, title=title
+                )
+            )
+        mod = trusted if tier == "trusted" else fast
+        return list(mod.render(grid, out_dir, view_list, assets_dir))
 
-    def _resolve_render_views(self, views, views_mod) -> list:
-        if views is None:
-            views = self._views_config
-        if views is None:
-            return views_mod.default_views()
-        if isinstance(views, str):
-            return views_mod.parse_views(views)
-        views = list(views)
-        if views and isinstance(views[0], str):
-            return views_mod.parse_views(";".join(views))
-        # Raw View objects: enforce the 36-view cap here (parse_views
-        # enforces it for string specs; the CLI enforces it at the end).
-        return views_mod.check_cap(views)
+
+def _shape_method(fn):
+    """Turn a :mod:`mcbuilder.shapes` function into a placing ``Build`` method."""
+
+    @functools.wraps(fn)
+    def method(self, *args, **kwargs):
+        kwargs.setdefault("seed", self._seed)
+        return self.place(fn(*args, **kwargs))
+
+    method.__doc__ = (fn.__doc__ or "") + (
+        "\n\nPlaces the shape and returns the placed Geometry "
+        f"(same arguments as ``mb.shapes.{fn.__name__}``)."
+    )
+    return method
+
+
+for _name in _shapes.__all__:
+    setattr(Build, _name, _shape_method(getattr(_shapes, _name)))
+del _name

@@ -45,6 +45,7 @@ class DiffError(McbuilderError):
 # data
 # ---------------------------------------------------------------------------
 
+
 @dataclasses.dataclass
 class VoxelDiff:
     """Cell-level diff between two runs (A = old, B = new)."""
@@ -67,6 +68,7 @@ class VoxelDiff:
 # ---------------------------------------------------------------------------
 # loading
 # ---------------------------------------------------------------------------
+
 
 def resolve_run_dir(runs_dir: str | Path, run_id: str) -> Path:
     """Resolve a run id (``run-001`` or bare ``001``) to its directory.
@@ -104,8 +106,7 @@ def _artifact_nbt_path(run_dir: Path, report: dict) -> Path:
             "(runs with validation errors export none — diff needs two clean runs)"
         )
     raise DiffError(
-        f"{run_dir.name}: several .nbt files and report.json names none — "
-        "cannot pick one"
+        f"{run_dir.name}: several .nbt files and report.json names none — cannot pick one"
     )
 
 
@@ -119,10 +120,7 @@ def _palette_canonical(entry) -> str:
     name = str(entry["Name"])
     props = entry.get("Properties")
     if props:
-        kv = ",".join(
-            f"{k}={v}"
-            for k, v in sorted((str(k), str(v)) for k, v in props.items())
-        )
+        kv = ",".join(f"{k}={v}" for k, v in sorted((str(k), str(v)) for k, v in props.items()))
         return blocks_mod.canonicalize(f"{name}[{kv}]")
     return blocks_mod.canonicalize(name)
 
@@ -156,9 +154,7 @@ def load_run_voxels(run_dir: str | Path) -> dict[tuple[int, int, int], str]:
     try:
         ox, oy, oz = (int(v) for v in origin)
     except (TypeError, ValueError):
-        raise DiffError(
-            f"{run_dir.name}: report.json has a malformed origin: {origin!r}"
-        ) from None
+        raise DiffError(f"{run_dir.name}: report.json has a malformed origin: {origin!r}") from None
     try:
         palette = [_palette_canonical(entry) for entry in f["palette"]]
         cells: dict[tuple[int, int, int], str] = {}
@@ -178,6 +174,7 @@ def load_run_voxels(run_dir: str | Path) -> dict[tuple[int, int, int], str]:
 # diff
 # ---------------------------------------------------------------------------
 
+
 def diff_voxel_maps(
     a: dict[tuple[int, int, int], str],
     b: dict[tuple[int, int, int], str],
@@ -195,14 +192,15 @@ def diff_voxel_maps(
         elif a[pos] != b[pos]:
             changed.append((pos, a[pos], b[pos]))
     return VoxelDiff(
-        added=added, removed=removed, changed=changed,
-        cells_a=len(a), cells_b=len(b),
+        added=added,
+        removed=removed,
+        changed=changed,
+        cells_a=len(a),
+        cells_b=len(b),
     )
 
 
-def diff_run_dirs(
-    a_dir: str | Path, b_dir: str | Path
-) -> VoxelDiff:
+def diff_run_dirs(a_dir: str | Path, b_dir: str | Path) -> VoxelDiff:
     """Load both runs' voxel maps and diff them (A = old, B = new)."""
     return diff_voxel_maps(load_run_voxels(a_dir), load_run_voxels(b_dir))
 
@@ -211,15 +209,14 @@ def diff_run_dirs(
 # text report
 # ---------------------------------------------------------------------------
 
+
 def _n(n: int, singular: str, plural: str | None = None) -> str:
     """``"1 changed cell"`` / ``"4 changed cells"`` (plural defaults to +s)."""
     word = singular if n == 1 else (plural if plural is not None else singular + "s")
     return f"{n} {word}"
 
 
-def format_diff(
-    diff: VoxelDiff, a_id: str, b_id: str, *, max_entries: int = 30
-) -> str:
+def format_diff(diff: VoxelDiff, a_id: str, b_id: str, *, max_entries: int = 30) -> str:
     """Render the human-readable diff report (printed to stdout by the CLI)."""
     lines = [f"diff {a_id} -> {b_id}"]
     if diff.is_empty:
@@ -252,9 +249,8 @@ def format_diff(
 # side-by-side comparison image
 # ---------------------------------------------------------------------------
 
-def _first_common_view(
-    a_dir: str | Path, b_dir: str | Path
-) -> tuple[Path, Path] | None:
+
+def _first_common_view(a_dir: str | Path, b_dir: str | Path) -> tuple[Path, Path] | None:
     """First preview view label present in both runs' reports and on disk.
 
     Direction-trusted views (``previews_faithful/``, ``previews_trusted/``)
@@ -355,12 +351,12 @@ def comparison_image(
     ):
         draw.text(
             (x + pad, title_h + (cap_h - 14) // 2),
-            label, font=font, fill=color,
+            label,
+            font=font,
+            fill=color,
         )
         canvas.paste(im, (x, title_h + cap_h))
-    draw.rectangle(
-        [w1, title_h + cap_h, w1 + gap - 1, height - 1], fill=(70, 70, 80)
-    )
+    draw.rectangle([w1, title_h + cap_h, w1 + gap - 1, height - 1], fill=(70, 70, 80))
     out_path = Path(out_path)
     canvas.save(out_path)
     return out_path

@@ -52,9 +52,7 @@ def normalize_block_data(raw: object) -> dict[str, dict]:
         blocks = {}
         for name, info in raw["blocks"].items():
             props = (info or {}).get("properties", {}) or {}
-            blocks[name] = {
-                "properties": {p: [str(v) for v in vals] for p, vals in props.items()}
-            }
+            blocks[name] = {"properties": {p: [str(v) for v in vals] for p, vals in props.items()}}
         return blocks
     raise ValueError(
         "unrecognized registry data: expected a minecraft-data blocks.json list "
@@ -78,9 +76,7 @@ def _split_block(block: str) -> tuple[str, dict[str, str], str | None]:
             if not part:
                 continue
             if "=" not in part:
-                raise ValueError(
-                    f"malformed property {part!r} in {block!r} (want name=value)"
-                )
+                raise ValueError(f"malformed property {part!r} in {block!r} (want name=value)")
             key, value = part.split("=", 1)
             props[key.strip()] = value.strip()
     return name, props, match.group(3)
@@ -122,12 +118,10 @@ class Registry:
         self.blocks: dict[str, dict[str, list[str]]] = {}
         for name, info in blocks.items():
             props = (info or {}).get("properties", {}) or {}
-            self.blocks[name] = {
-                p: [str(v) for v in vals] for p, vals in props.items()
-            }
+            self.blocks[name] = {p: [str(v) for v in vals] for p, vals in props.items()}
 
     @classmethod
-    def load(cls, version: str, cache_dir: Path) -> "Registry":
+    def load(cls, version: str, cache_dir: Path) -> Registry:
         """Load the registry for ``version`` from the assets cache.
 
         Reads ``<cache_dir>/<version>/minecraft-data.json`` as written by
@@ -201,9 +195,7 @@ class Registry:
             try:
                 name, props, nbt = _split_block(block)
             except ValueError as exc:
-                errors.append(
-                    {"block": block, "message": str(exc), "suggestions": []}
-                )
+                errors.append({"block": block, "message": str(exc), "suggestions": []})
                 continue
 
             if name == _AIR:
@@ -225,10 +217,7 @@ class Registry:
                     warnings.append(
                         {
                             "block": block,
-                            "message": (
-                                f"{name} is allowlisted: unvalidated, "
-                                "build at own risk"
-                            ),
+                            "message": (f"{name} is allowlisted: unvalidated, build at own risk"),
                         }
                     )
                     continue
@@ -249,8 +238,7 @@ class Registry:
                         {
                             "block": block,
                             "message": (
-                                f"unknown block {name!r} "
-                                f"(not in the {self.version} registry)"
+                                f"unknown block {name!r} (not in the {self.version} registry)"
                             ),
                             "suggestions": self._suggest(name),
                         }
@@ -276,10 +264,7 @@ class Registry:
                 if value not in legal:
                     hint = ""
                     if value.lower() in [v.lower() for v in legal]:
-                        hint = (
-                            f" (did you mean {value.lower()!r}? "
-                            "values are case-sensitive)"
-                        )
+                        hint = f" (did you mean {value.lower()!r}? values are case-sensitive)"
                     errors.append(
                         {
                             "block": block,

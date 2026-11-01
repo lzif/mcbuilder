@@ -57,8 +57,8 @@ def _rim_stair(x, z, facing):
 def _canopy():
     """Canopy at y=5 (slab plate + stair eave with mossy rim), stepped cap at y=6."""
     g = mb.Geometry()
-    plate = mb.part.box(c1=(0, 0, 0), c2=(4, 0, 4), block="minecraft:stone_brick_slab[type=bottom]")
-    for x, y, z, b in plate.cells():
+    plate = mb.shapes.box((0, 0, 0), (4, 0, 4), "minecraft:stone_brick_slab[type=bottom]")
+    for x, _y, z, b in plate.cells():
         g.set(x + 1, 5, z + 1, b)
     for i in (2, 3, 4):
         g.set(i, 5, 0, _rim_stair(i, 0, "north"))
@@ -76,7 +76,9 @@ def _canopy():
             if (dx, dz) == (1, 1):
                 g.set(x, 6, z, SB)
             elif (dx, dz) in ((1, 0), (1, 2), (0, 1), (2, 1)):
-                facing = {(1, 0): "south", (1, 2): "north", (0, 1): "east", (2, 1): "west"}[(dx, dz)]
+                facing = {(1, 0): "south", (1, 2): "north", (0, 1): "east", (2, 1): "west"}[
+                    (dx, dz)
+                ]
                 stair = (
                     "minecraft:mossy_stone_brick_stairs"
                     if (x + z) % 3 == 0
@@ -111,7 +113,7 @@ with BUILD:
         at=(0, 0, 0),
     )
     BUILD.place(_canopy(), at=(0, 0, 0))
-    chains = mb.part.pillar(height=2, block="minecraft:iron_chain[axis=y]")
+    chains = mb.shapes.pillar((0, 0, 0), 2, "minecraft:iron_chain[axis=y]")
     for cx, cz in ((2, 1), (4, 1), (2, 5), (4, 5)):
         BUILD.place(chains, at=(cx, 3, cz))
         BUILD.set(cx, 2, cz, "minecraft:lantern[hanging=true]")

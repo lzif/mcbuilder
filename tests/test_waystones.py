@@ -56,7 +56,7 @@ def _waystone_cell(build):
         idx = palette.index("lostqol:waystone")
     except ValueError:
         return None
-    cells = (arr == idx)
+    cells = arr == idx
     coords = list(zip(*cells.nonzero()))
     assert len(coords) == 1, "exactly one waystone block per variant"
     x, y, z = coords[0]
@@ -82,9 +82,7 @@ def test_variant_waystone_at_pedestal_top(variant):
 def test_variant_nbt_roundtrip(tmp_path, variant):
     build = _load(variant)
     out = tmp_path / f"{Path(variant).stem}.nbt"
-    warnings = export_nbt_mod.write_structure_nbt(
-        build.grid, out, data_version=4903, include_air=False
-    )
+    warnings = export_nbt_mod.write_structure_nbt(build.grid, out, data_version=4903, air="none")
     assert warnings == []
     import nbtlib
 

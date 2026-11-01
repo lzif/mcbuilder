@@ -23,9 +23,8 @@ import pytest
 from PIL import Image
 
 import mcbuilder as mb
-from mcbuilder.preview import _crop_bounds, _renderable_mask, _BG
-from mcbuilder.views import parse_views
-
+from mcbuilder.render.fast import _BG, _crop_bounds, _renderable_mask
+from mcbuilder.render.views import parse_views
 
 # ---------------------------------------------------------------------------
 # renderable-mask / crop contract
@@ -50,9 +49,9 @@ def test_renderable_mask_without_air_in_palette():
 def test_crop_bounds_tight_over_renderable_cells():
     palette = ["minecraft:stone", "minecraft:oak_planks", "minecraft:air"]
     arr = np.full((4, 4, 4), -1, dtype=np.int32)
-    arr[1, 1, 1] = 0   # stone
-    arr[2, 2, 2] = 1   # planks
-    arr[3, 3, 3] = 2   # carved air must not extend the crop
+    arr[1, 1, 1] = 0  # stone
+    arr[2, 2, 2] = 1  # planks
+    arr[3, 3, 3] = 2  # carved air must not extend the crop
     assert _crop_bounds(arr, palette) == ((1, 3), (1, 3), (1, 3))
 
 
@@ -103,7 +102,7 @@ def test_end_to_end_hollow_box_offset_origin(tmp_path):
 
 
 def test_colon_style_views_from_plan_example(tmp_path):
-    """PLAN section 4.5's own example uses ``orbit:8_el:25`` — it must work."""
+    """The colon form ``orbit:8_el:25`` must parse."""
     assert [v.label for v in parse_views("orbit:8_el:25;top")][:2] == [
         "az000_el025",
         "az045_el025",
@@ -135,16 +134,16 @@ def test_build_render_view_precedence(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# parts as Build methods (PLAN section 4.5 usage: BUILD.stairs_run(...))
+# shapes as Build methods
 # ---------------------------------------------------------------------------
 
 
-def test_parts_methods_place_expected_cells_with_provenance():
+def test_shape_methods_place_expected_cells_with_provenance():
     b = mb.Build(seed=11)
     with b:
-        b.stairs_run((0, 0, 0), "north", 3, "minecraft:stone_brick_stairs")
+        b.stairs((0, 0, 0), "north", "minecraft:stone_brick_stairs", length=3)
         b.pillar((5, 0, 5), 3, "minecraft:oak_log[axis=y]")
-        b.railing((0, 4, 0), (2, 4, 0), "minecraft:oak_fence")
+        b.line((0, 4, 0), (2, 4, 0), "minecraft:oak_fence")
     grid = b.grid
     # stairs ascend north (-z), tall backs uphill (facing north)
     arr, palette, provenance = grid.to_dense()
@@ -161,13 +160,6 @@ def test_parts_methods_place_expected_cells_with_provenance():
     assert f == __file__ and isinstance(line, int)
 
 
-def test_parts_module_functions_still_work_directly():
-    b = mb.Build(seed=11)
-    with b:
-        mb.parts.pillar(b, (0, 0, 0), 2, "minecraft:stone")
-    assert b.grid.count_non_air() == 2
-
-
 # ---------------------------------------------------------------------------
 # full CLI pipeline with the plan-example surface (colon views + parts)
 # ---------------------------------------------------------------------------
@@ -176,8 +168,7 @@ HANDMADE_BLOCKS = {
     "minecraft:stone": {"properties": {}},
     "minecraft:oak_planks": {"properties": {}},
     "minecraft:stone_brick_stairs": {
-        "properties": {"facing": ["north", "south", "east", "west"],
-                       "half": ["top", "bottom"]}
+        "properties": {"facing": ["north", "south", "east", "west"], "half": ["top", "bottom"]}
     },
     "minecraft:air": {"properties": {}},
 }
@@ -189,7 +180,7 @@ BUILD = mb.Build(seed=7, views=["orbit:8_el:25", "top"])
 
 with BUILD:
     BUILD.box((0, 0, 0), (4, 2, 4), "minecraft:oak_planks")
-    BUILD.stairs_run((0, 3, 0), "east", 3, "minecraft:stone_brick_stairs")
+    BUILD.stairs((0, 3, 0), "east", "minecraft:stone_brick_stairs", length=3)
 """
 
 
@@ -203,14 +194,12 @@ def test_cli_run_end_to_end(tmp_path, monkeypatch):
     from mcbuilder.registry import Registry
 
     reg = Registry(HANDMADE_BLOCKS, "test")
-    monkeypatch.setattr(
-        Registry, "load", classmethod(lambda cls, version, cache_dir: reg)
-    )
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, version, cache_dir: reg))
     script = tmp_path / "hut.py"
     script.write_text(SCRIPT)
     out = tmp_path / "dist"
 
-    rc = main(["run", str(script), "--out", str(out), "--preview"])
+    rc = main(["run", str(script), "--out", str(out), "--preview", "--tier", "all"])
     assert rc == 0
 
     run_dir = out / "run-001"

@@ -1,12 +1,18 @@
-"""mcbuilder — Python tooling for AI agents that build Minecraft structures."""
+"""mcbuilder: build Minecraft structures from Python scripts.
 
-from mcbuilder import part, parts, preview, preview_trusted, rotation, views  # noqa: F401  (submodule access as mb.part etc.)
+Write a script that fills a :class:`Build`, then use the ``mcbuild`` CLI to
+validate it against the real block registry, render previews, export a
+structure ``.nbt`` and generate a layer-by-layer build guide.
+"""
+
+from mcbuilder import rotation, shapes  # noqa: F401
 from mcbuilder.build import Build, BuildError
 from mcbuilder.errors import McbuilderError
 from mcbuilder.geometry import Geometry
+from mcbuilder.materials import patches
 from mcbuilder.voxels import GridBoundsError
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Build",
@@ -14,11 +20,8 @@ __all__ = [
     "Geometry",
     "GridBoundsError",
     "McbuilderError",
-    "__version__",
-    "part",
-    "parts",
-    "preview",
-    "preview_trusted",
+    "patches",
     "rotation",
-    "views",
+    "shapes",
+    "__version__",
 ]
