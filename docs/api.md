@@ -110,8 +110,7 @@ lambda x, y, z: "minecraft:stone" if y < 3 else "minecraft:andesite"            
 - A **weighted list** picks per cell from a stable hash of `(seed, x, y, z)`. Bare strings
   weigh 1.
 - **`mb.patches(palette, scale=4.0, salt="")`** picks with smooth noise, so variants form
-  patches about `scale` blocks across. Usually what you want for walls, floors and roofs.
-  Change `salt` for a different layout with the same palette.
+  patches about `scale` blocks across. Change `salt` for a different layout with the same palette.
 - A **callable** gets the cell's coordinates and returns a block string.
 
 ## `mb.Geometry`

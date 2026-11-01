@@ -48,7 +48,6 @@ mcbuild run hut.py --preview --guide    # previews + hut.nbt + layer guide in di
 - Use `--focus` close-ups on big builds and `--tier trusted` to check every `facing`.
 - Shapes return what they placed: size the next part from `geo.bounds()` instead of doing the
   arithmetic.
-- Follow the [design guide](docs/design.md): passing validation is not the same as looking good.
 
 ## Documentation
 
@@ -59,7 +58,6 @@ mcbuild run hut.py --preview --guide    # previews + hut.nbt + layer guide in di
 | [Blocks and directions](docs/blocks.md) | block strings, `facing`/`axis`, coordinates, rotation |
 | [Previews](docs/previews.md) | render tiers, camera views, close-ups |
 | [CLI](docs/cli.md) | every command and flag, `report.json`, `.nbt` export, build guides |
-| [Design guide](docs/design.md) | how to make a structure look good, not just valid |
 
 Examples live in [`examples/`](examples/): a homestead (house, barn, watchtower, well), an
 underwater base, a floating observatory and a set of small waystones.
