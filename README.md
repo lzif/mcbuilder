@@ -1,168 +1,71 @@
 # mcbuilder
 
-Python tooling for AI agents that build Minecraft structures. Make it easier
-for agents to build complex structures while reducing code complexity —
-without reducing detail.
+Build Minecraft structures from Python. Write a short script, and mcbuilder:
 
-The loop: an agent writes a builder script → mcbuilder validates every block
-against the real block registry → renders labeled preview images from
-customizable angles → the agent iterates on what it sees. `report.json`'s
-`block_counts` is your survival material shopping list.
+1. **validates** every block against the real block registry of your Minecraft version,
+2. **renders previews** with the real vanilla models and textures, so you (or an AI agent) can
+   look at the result and iterate,
+3. **exports** a structure-block `.nbt` you can paste with a structure block, Litematica or a
+   server plugin,
+4. **writes a build guide**: a top-down plan for every layer plus material lists, for building by
+   hand in survival,
+5. **imports** an existing `.nbt` back into a readable script, to study or remix someone's build.
 
-> **Deploy artifact: `.nbt`.** `mcbuild run` writes a vanilla structure-block
-> `.nbt` (gzipped NBT) next to `report.json` — the same shape a structure
-> block saves, readable by LostQoL's structure parser. More serializers
-> (`.mcstructure`, `.schem`, ...) plug in as swappable exporters; the DSL,
-> validator, parts catalog, preview renderer, and CLI are format-agnostic.
+It is designed for AI agents as much as for people: one obvious way to do each thing, errors that
+point at the line of your script, and previews you can actually check.
+
+![A Tudor house built with mcbuilder](docs/images/house.jpg)
 
 ## Install
 
 ```bash
-pip install mcbuilder
-# or with uv:
-uv pip install mcbuilder
+pip install mcbuilder            # Python 3.10+
+mcbuild assets fetch --version 26.2   # once: block registry + vanilla textures
 ```
 
-Python 3.10+.
-
-## Quick start
-
-```bash
-mcbuild assets fetch --version 26.2   # one-time: registry + vanilla textures
-mcbuild init                          # write a runnable starter build (house.py)
-```
-
-Or write your own:
+## Thirty seconds
 
 ```python
 # hut.py
 import mcbuilder as mb
 
-BUILD = mb.Build(seed=7, views=["az045_el025", "top"])
+BUILD = mb.Build(seed=1)
 
 with BUILD:
-    BUILD.box((0, 0, 0), (9, 3, 9), "minecraft:stone_bricks")
-    BUILD.walls((0, 4, 0), (9, 7, 9), "minecraft:mossy_stone_bricks")
-    BUILD.stairs_run((0, 0, 10), "north", 5, "minecraft:stone_brick_stairs")
+    BUILD.box((0, 0, 0), (6, 0, 4), "minecraft:cobblestone")
+    BUILD.walls((0, 1, 0), (6, 3, 4), "minecraft:oak_planks")
+    BUILD.roof_gable((-1, 4, -1), (7, 4, 5), "minecraft:spruce_stairs", ridge="x")
 ```
 
 ```bash
-mcbuild check hut.py          # validate only, fast
-mcbuild run hut.py --out dist/ --preview
+mcbuild check hut.py                    # validate (fast)
+mcbuild run hut.py --preview --guide    # previews + hut.nbt + layer guide in dist/run-001/
 ```
 
-`mcbuild run` writes an auto-versioned `dist/run-001/` directory with
-`report.json` (errors with file:line provenance, warnings, block counts,
-labeled view list), and `previews/` PNGs.
+## For AI agents
 
-## Parts catalog
+- Read [the API reference](docs/api.md) once; it fits in a page.
+- Loop on `mcbuild check` (under a second), then `mcbuild run --preview`, and look at the images.
+- Use `--focus` close-ups on big builds and `--tier trusted` to check every `facing`.
+- Shapes return what they placed: size the next part from `geo.bounds()` instead of doing the
+  arithmetic.
 
-The agent does composition and proportion; the parts own the geometry
-math. Every part is called as `mb.parts.<name>(BUILD, ...)` inside the
-`with BUILD:` block — or via the `BUILD.<name>(...)` delegates
-(`BUILD.stairs_run(...)`, `BUILD.pillar(...)`, `BUILD.railing(...)`).
+## Documentation
 
-| Part | Signature | Facing rule |
-|---|---|---|
-| `stairs_run` | `(BUILD, start, direction, length, block, width=1)` | ascends *towards* `direction`; pass the stair block **without** a `facing` property — the part sets it |
-| `pillar` | `(BUILD, base, height, block)` | vertical stack at `base`, no facing involved |
-| `railing` | `(BUILD, start, end, block)` | straight axis-aligned run (x or z constant, same y); fence/wall connections resolve in-game, previews show unconnected arms |
-| `roof_gable` | `BUILD.roof_gable(c1, c2, block, ridge=)` | `ridge="x"` or `"z"` (required keyword); pass the stair block **without** `facing` |
+| | |
+|---|---|
+| [Getting started](docs/getting-started.md) | install, first build, the check → preview → iterate loop |
+| [API reference](docs/api.md) | `Build`, shapes, materials, `Geometry`, reading a build back |
+| [Blocks and directions](docs/blocks.md) | block strings, `facing`/`axis`, coordinates, rotation |
+| [Previews](docs/previews.md) | render tiers, camera views, close-ups |
+| [CLI](docs/cli.md) | every command and flag, `report.json`, `.nbt` export, build guides |
+| [Design guide (draft)](docs/design-draft.md) | medieval timber-frame techniques measured from expert builds; provisional |
 
-### Instancing: define once, stamp many
-
-`mb.part.*` factories return a `Geometry` — pure relative-coordinate
-voxel data that places nothing. Stamp it with `BUILD.place()`:
-
-```python
-import mcbuilder as mb
-
-pillar = mb.part.pillar(height=5, block="minecraft:oak_log")  # defines, places nothing
-
-with BUILD:
-    BUILD.place(pillar, at=(0, 0, 0))
-    BUILD.place(pillar, at=(8, 0, 0))
-    BUILD.place(pillar, at=(0, 0, 8))
-    BUILD.place(pillar, at=(8, 0, 8))
-```
-
-Factories (`mb.part.box/pillar/stairs_run/railing`) are keyword-only;
-`BUILD.place(geo, at=(x, y, z))` takes explicit coordinates every time
-(no implicit placement state). Geometries compose: `geo1 + geo2`
-stamps as one unit (later wins on overlap). For custom shapes, build a
-datablock cell by cell: `g = mb.Geometry(); g.set(dx, dy, dz, block)`.
-
-## Previews
-
-`mcbuild run --preview` renders two tiers into each run dir:
-
-- `previews/` — fast tier: textured cubes, quick to iterate on.
-  Flagged `directions_untrusted` in `report.json`: it cannot show
-  facing/axis state, so never trust a direction from it.
-- `previews_trusted/` — direction-trusted tier: simplified geometry
-  that shows orientation truthfully (stairs as oriented wedges,
-  slabs as half-boxes, axis bands on logs, facing plates, …), no
-  textures needed. Flagged `directions_trusted`. Blocks it cannot
-  render truthfully become labeled cubes plus one warning per block
-  type — check `report.json` warnings before shipping an `.nbt`.
-
-## Rotation semantics
-
-`mcbuilder.rotation` implements the structure rotation table
-(`rotate_position`, `rotate_blockstate` for `NONE` / `CLOCKWISE_90` /
-`CLOCKWISE_180` / `COUNTERCLOCKWISE_90`) — the same semantics the
-LostQoL `StructurePaster` applies server-side, so a design verified
-here pastes correctly at all four rotations.
-
-Core DSL methods on `BUILD`: `set(x, y, z, block)`, `box(c1, c2, block)`,
-`walls(c1, c2, block)`, `floor(c1, c2, block)`, `carve(c1, c2)` (removes
-the inclusive corner box — the subtractive complement of `box`;
-removed cells read as unset, not air). Block strings are canonical
-`minecraft:name[prop=val,...]{nbt}` — property order never matters.
-
-**Partial properties are legal and take vanilla defaults.** You may write
-`minecraft:oak_log[axis=y]` and omit `waterlogged`, or
-`minecraft:oak_leaves[persistent=true]` and omit `distance` — validation
-only checks the properties you write (each must be a legal name/value for
-that block), never the ones you skip. mcbuilder does not fill anything in:
-the `.nbt` palette carries exactly the properties you specified, and
-Minecraft resolves the rest to defaults at paste time (previews use the
-same defaults). When the default matters to your build — `waterlogged`,
-`hanging`, `facing` — write the property explicitly.
-
-## Introspection
-
-Read the build back without dropping to numpy — all read-only, no
-`with BUILD:` needed:
-
-- `BUILD.get(x, y, z)` → canonical block string at that cell, or `None`
-  when the cell is empty or carved air.
-- `BUILD.count(block)` → number of cells holding `block` (exact match
-  on the canonical blockstate).
-- `BUILD.find(block)` → sorted list of `(x, y, z)` tuples holding
-  `block`.
-
-**`to_dense()` axis convention** — the trap to avoid:
-`BUILD.grid.to_dense()` returns `(array, palette, provenance)` with
-`array.shape == (sx, sy, sz)` and `array[i, j, k]` == the cell at
-`(minx+i, miny+j, minz+k)`. **Axis 0 is X, axis 1 is Y, axis 2 is Z —
-the mapping is direct, not transposed**: never index `array[z, y, x]`.
-Never-placed cells read as `-1` (`UNSET`); explicitly carved
-`"minecraft:air"` reads as air's palette index.
-
-## Block versions
-
-`mcbuild assets fetch --version <x.y.z>` downloads the block registry and
-vanilla client assets for your server's version into the local cache.
-Mojang assets are never bundled with this package — they are fetched at
-user time. Pin the version per project in `mcbuild.toml`:
-
-```toml
-mc_version = "26.2"
-max_dimensions = [256, 256, 256]
-allowlist = ["mymod:custom_block"]
-```
+Examples live in [`examples/`](examples/): a storehouse (the design guide's test build), a
+homestead (house, barn, watchtower, well), an underwater base, a floating observatory and a set of
+small waystones.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Minecraft assets are never bundled; `mcbuild assets fetch`
+downloads them from Mojang onto your machine.

@@ -1,4 +1,4 @@
-"""Tests for mcbuilder.rotation: the PLAN §3 normative rotation table.
+"""Tests for mcbuilder.rotation: the normative rotation table.
 
 Mirrors StructurePaster.rotateBlockData() (LostQoL): positions and
 blockstates for all four StructureRotations. These semantics are what
@@ -14,8 +14,8 @@ from mcbuilder.rotation import (
     rotate_position,
 )
 
-
 # ---------------------------------------------------------------- positions
+
 
 def test_rotate_position_none_is_identity():
     for x, z in [(0, 0), (6, 0), (0, 6), (6, 6), (3, 3)]:
@@ -62,11 +62,18 @@ def test_rotate_position_invalid_rotation():
 
 # ---------------------------------------------------------------- blockstates
 
-@pytest.mark.parametrize("rotation,expected", [
-    ("CLOCKWISE_90", {"north": "east", "east": "south", "south": "west", "west": "north"}),
-    ("COUNTERCLOCKWISE_90", {"north": "west", "west": "south", "south": "east", "east": "north"}),
-    ("CLOCKWISE_180", {"north": "south", "south": "north", "east": "west", "west": "east"}),
-])
+
+@pytest.mark.parametrize(
+    "rotation,expected",
+    [
+        ("CLOCKWISE_90", {"north": "east", "east": "south", "south": "west", "west": "north"}),
+        (
+            "COUNTERCLOCKWISE_90",
+            {"north": "west", "west": "south", "south": "east", "east": "north"},
+        ),
+        ("CLOCKWISE_180", {"north": "south", "south": "north", "east": "west", "west": "east"}),
+    ],
+)
 def test_rotate_facing_all_directions(rotation, expected):
     for src, dst in expected.items():
         got = rotate_blockstate(f"minecraft:oak_stairs[facing={src},half=bottom]", rotation)
@@ -75,60 +82,81 @@ def test_rotate_facing_all_directions(rotation, expected):
 
 def test_rotate_facing_up_down_invariant():
     for r in ("CLOCKWISE_90", "CLOCKWISE_180", "COUNTERCLOCKWISE_90"):
-        assert rotate_blockstate("minecraft:dispenser[facing=up]", r) == \
-            "minecraft:dispenser[facing=up]"
-        assert rotate_blockstate("minecraft:dispenser[facing=down]", r) == \
-            "minecraft:dispenser[facing=down]"
+        assert (
+            rotate_blockstate("minecraft:dispenser[facing=up]", r)
+            == "minecraft:dispenser[facing=up]"
+        )
+        assert (
+            rotate_blockstate("minecraft:dispenser[facing=down]", r)
+            == "minecraft:dispenser[facing=down]"
+        )
 
 
 def test_rotate_axis():
-    assert rotate_blockstate("minecraft:oak_log[axis=x]", "CLOCKWISE_90") == \
-        "minecraft:oak_log[axis=z]"
-    assert rotate_blockstate("minecraft:oak_log[axis=z]", "CLOCKWISE_90") == \
-        "minecraft:oak_log[axis=x]"
-    assert rotate_blockstate("minecraft:oak_log[axis=y]", "CLOCKWISE_90") == \
-        "minecraft:oak_log[axis=y]"
-    assert rotate_blockstate("minecraft:oak_log[axis=x]", "COUNTERCLOCKWISE_90") == \
-        "minecraft:oak_log[axis=z]"
+    assert (
+        rotate_blockstate("minecraft:oak_log[axis=x]", "CLOCKWISE_90")
+        == "minecraft:oak_log[axis=z]"
+    )
+    assert (
+        rotate_blockstate("minecraft:oak_log[axis=z]", "CLOCKWISE_90")
+        == "minecraft:oak_log[axis=x]"
+    )
+    assert (
+        rotate_blockstate("minecraft:oak_log[axis=y]", "CLOCKWISE_90")
+        == "minecraft:oak_log[axis=y]"
+    )
+    assert (
+        rotate_blockstate("minecraft:oak_log[axis=x]", "COUNTERCLOCKWISE_90")
+        == "minecraft:oak_log[axis=z]"
+    )
     # 180 does not touch axis.
-    assert rotate_blockstate("minecraft:oak_log[axis=x]", "CLOCKWISE_180") == \
-        "minecraft:oak_log[axis=x]"
+    assert (
+        rotate_blockstate("minecraft:oak_log[axis=x]", "CLOCKWISE_180")
+        == "minecraft:oak_log[axis=x]"
+    )
 
 
 def test_rotate_sign_rotation():
-    assert rotate_blockstate("minecraft:oak_sign[rotation=0]", "CLOCKWISE_90") == \
-        "minecraft:oak_sign[rotation=4]"
-    assert rotate_blockstate("minecraft:oak_sign[rotation=14]", "CLOCKWISE_90") == \
-        "minecraft:oak_sign[rotation=2]"
-    assert rotate_blockstate("minecraft:oak_sign[rotation=3]", "CLOCKWISE_180") == \
-        "minecraft:oak_sign[rotation=11]"
-    assert rotate_blockstate("minecraft:oak_sign[rotation=3]", "COUNTERCLOCKWISE_90") == \
-        "minecraft:oak_sign[rotation=15]"
+    assert (
+        rotate_blockstate("minecraft:oak_sign[rotation=0]", "CLOCKWISE_90")
+        == "minecraft:oak_sign[rotation=4]"
+    )
+    assert (
+        rotate_blockstate("minecraft:oak_sign[rotation=14]", "CLOCKWISE_90")
+        == "minecraft:oak_sign[rotation=2]"
+    )
+    assert (
+        rotate_blockstate("minecraft:oak_sign[rotation=3]", "CLOCKWISE_180")
+        == "minecraft:oak_sign[rotation=11]"
+    )
+    assert (
+        rotate_blockstate("minecraft:oak_sign[rotation=3]", "COUNTERCLOCKWISE_90")
+        == "minecraft:oak_sign[rotation=15]"
+    )
 
 
 def test_rotate_invariants_untouched():
-    src = ("minecraft:oak_stairs[facing=north,half=top,shape=inner_left,"
-           "waterlogged=true]")
+    src = "minecraft:oak_stairs[facing=north,half=top,shape=inner_left,waterlogged=true]"
     assert rotate_blockstate(src, "CLOCKWISE_90") == (
-        "minecraft:oak_stairs[facing=east,half=top,shape=inner_left,"
-        "waterlogged=true]")
+        "minecraft:oak_stairs[facing=east,half=top,shape=inner_left,waterlogged=true]"
+    )
     src = "minecraft:oak_trapdoor[facing=west,half=bottom,open=true]"
-    assert rotate_blockstate(src, "CLOCKWISE_180") == \
-        "minecraft:oak_trapdoor[facing=east,half=bottom,open=true]"
+    assert (
+        rotate_blockstate(src, "CLOCKWISE_180")
+        == "minecraft:oak_trapdoor[facing=east,half=bottom,open=true]"
+    )
 
 
 def test_rotate_plain_block_unchanged():
-    assert rotate_blockstate("minecraft:stone_bricks", "CLOCKWISE_90") == \
-        "minecraft:stone_bricks"
-    assert rotate_blockstate("minecraft:stone_bricks", "NONE") == \
-        "minecraft:stone_bricks"
+    assert rotate_blockstate("minecraft:stone_bricks", "CLOCKWISE_90") == "minecraft:stone_bricks"
+    assert rotate_blockstate("minecraft:stone_bricks", "NONE") == "minecraft:stone_bricks"
 
 
 def test_rotate_nbt_preserved():
-    src = "minecraft:furnace[facing=north]{CustomName:'{\"text\":\"x\"}'}"
+    src = 'minecraft:furnace[facing=north]{CustomName:\'{"text":"x"}\'}'
     got = rotate_blockstate(src, "CLOCKWISE_90")
     assert got.startswith("minecraft:furnace[facing=east]")
-    assert got.endswith("{CustomName:'{\"text\":\"x\"}'}")
+    assert got.endswith('{CustomName:\'{"text":"x"}\'}')
 
 
 def test_rotate_blockstate_round_trip():
@@ -137,8 +165,7 @@ def test_rotate_blockstate_round_trip():
     for _ in range(4):
         q = rotate_blockstate(q, "CLOCKWISE_90")
     assert q == src
-    assert rotate_blockstate(
-        rotate_blockstate(src, "CLOCKWISE_90"), "COUNTERCLOCKWISE_90") == src
+    assert rotate_blockstate(rotate_blockstate(src, "CLOCKWISE_90"), "COUNTERCLOCKWISE_90") == src
 
 
 def test_rotate_blockstate_invalid_rotation():
@@ -146,25 +173,22 @@ def test_rotate_blockstate_invalid_rotation():
         rotate_blockstate("minecraft:stone", "FLIP")
 
 
-# ------------------------------------------------- finding 5: cardinal keys
+# ------------------------------------------------- cardinal keys
 
 
 def test_remap_cardinal_connection_keys_cw90():
     from mcbuilder import rotation as rot
 
-    got = rot.rotate_blockstate(
-        "minecraft:oak_fence[north=true,south=false]", "CLOCKWISE_90")
+    got = rot.rotate_blockstate("minecraft:oak_fence[north=true,south=false]", "CLOCKWISE_90")
     assert got == "minecraft:oak_fence[east=true,west=false]", got
 
 
 def test_remap_cardinal_connection_keys_ccw90_and_180():
     from mcbuilder import rotation as rot
 
-    got = rot.rotate_blockstate(
-        "minecraft:oak_fence[east=true,west=true]", "COUNTERCLOCKWISE_90")
+    got = rot.rotate_blockstate("minecraft:oak_fence[east=true,west=true]", "COUNTERCLOCKWISE_90")
     assert got == "minecraft:oak_fence[north=true,south=true]", got
-    got = rot.rotate_blockstate(
-        "minecraft:vine[north=true]", "CLOCKWISE_180")
+    got = rot.rotate_blockstate("minecraft:vine[north=true]", "CLOCKWISE_180")
     assert got == "minecraft:vine[south=true]", got
 
 
@@ -172,35 +196,34 @@ def test_remap_cardinal_keys_values_untouched():
     from mcbuilder import rotation as rot
 
     # Values ride along with their key; only key NAMES permute.
-    got = rot.rotate_blockstate(
-        "minecraft:oak_fence[east=false,north=true]", "CLOCKWISE_90")
+    got = rot.rotate_blockstate("minecraft:oak_fence[east=false,north=true]", "CLOCKWISE_90")
     assert got == "minecraft:oak_fence[east=true,south=false]", got
 
 
 def test_remap_compound_orientation_value():
     from mcbuilder import rotation as rot
 
-    got = rot.rotate_blockstate(
-        "minecraft:test_block[orientation=north_up]", "CLOCKWISE_90")
+    got = rot.rotate_blockstate("minecraft:test_block[orientation=north_up]", "CLOCKWISE_90")
     assert got == "minecraft:test_block[orientation=east_up]", got
 
 
 def test_mirror_blockstate_swaps_facing_and_keys():
     from mcbuilder import rotation as rot
 
-    assert rot.mirror_blockstate(
-        "minecraft:oak_stairs[facing=east,half=bottom]", "x"
-    ) == "minecraft:oak_stairs[facing=west,half=bottom]"
-    assert rot.mirror_blockstate(
-        "minecraft:oak_stairs[facing=north,half=bottom]", "z"
-    ) == "minecraft:oak_stairs[facing=south,half=bottom]"
-    assert rot.mirror_blockstate(
-        "minecraft:oak_fence[east=true,west=false]", "x"
-    ) == "minecraft:oak_fence[east=false,west=true]"
+    assert (
+        rot.mirror_blockstate("minecraft:oak_stairs[facing=east,half=bottom]", "x")
+        == "minecraft:oak_stairs[facing=west,half=bottom]"
+    )
+    assert (
+        rot.mirror_blockstate("minecraft:oak_stairs[facing=north,half=bottom]", "z")
+        == "minecraft:oak_stairs[facing=south,half=bottom]"
+    )
+    assert (
+        rot.mirror_blockstate("minecraft:oak_fence[east=true,west=false]", "x")
+        == "minecraft:oak_fence[east=false,west=true]"
+    )
     # up/down and axis pass through.
-    assert rot.mirror_blockstate(
-        "minecraft:oak_log[axis=x]", "x"
-    ) == "minecraft:oak_log[axis=x]"
+    assert rot.mirror_blockstate("minecraft:oak_log[axis=x]", "x") == "minecraft:oak_log[axis=x]"
 
 
 def test_mirror_blockstate_rejects_bad_axis():

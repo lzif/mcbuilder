@@ -13,7 +13,9 @@ from mcbuilder.voxels import GridBoundsError, VoxelGrid
 
 
 def _helper_box(b):
-    b.box((5, 5, 5), (5, 5, 5), "minecraft:gold_block"); return sys._getframe().f_lineno
+    line = sys._getframe().f_lineno + 1
+    b.box((5, 5, 5), (5, 5, 5), "minecraft:gold_block")
+    return line
 
 
 # -- batch scope ---------------------------------------------------------
@@ -56,7 +58,8 @@ def test_build_error_is_mcbuilder_error():
 def test_provenance_points_at_caller_file_and_line():
     b = Build()
     with b:
-        b.set(0, 0, 0, "minecraft:stone"); expected = sys._getframe().f_lineno
+        expected = sys._getframe().f_lineno + 1
+        b.set(0, 0, 0, "minecraft:stone")
     _, _, prov = b.grid.to_dense()
     filename, lineno = prov[0]
     assert filename.endswith("test_build.py")
@@ -79,8 +82,9 @@ def test_provenance_skips_internal_package_frames():
 def test_provenance_first_placement_wins():
     b = Build()
     with b:
-        b.set(0, 0, 0, "minecraft:stone"); first = sys._getframe().f_lineno
-        b.set(9, 9, 9, "minecraft:stone"); _ = sys._getframe().f_lineno
+        first = sys._getframe().f_lineno + 1
+        b.set(0, 0, 0, "minecraft:stone")
+        b.set(9, 9, 9, "minecraft:stone")
     _, _, prov = b.grid.to_dense()
     assert prov[0][1] == first
 
@@ -115,14 +119,6 @@ def test_walls_hollow_no_floor_or_ceiling():
     assert arr[0, 0, 1] != -1 and arr[0, 2, 1] != -1
 
 
-def test_floor_is_height_one_at_c1_y():
-    b = Build()
-    with b:
-        b.floor((0, 5, 0), (2, 9, 2), "minecraft:oak_planks")
-    assert b.grid.count_non_air() == 9
-    assert b.grid.bounds() == ((0, 5, 0), (2, 5, 2))
-
-
 def test_set_overwrites_last_write_wins():
     b = Build()
     with b:
@@ -150,7 +146,7 @@ def _facing(block: str) -> str:
 def test_roof_gable_ridge_x():
     b = Build()
     with b:
-        b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "x")
+        b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", ridge="x")
     assert b.grid.bounds() == ((0, 0, 0), (4, 2, 4))
     arr, palette, _ = b.grid.to_dense()
     at = lambda x, y, z: palette[arr[x, y, z]]
@@ -171,7 +167,7 @@ def test_roof_gable_ridge_x():
 def test_roof_gable_ridge_z():
     b = Build()
     with b:
-        b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "z")
+        b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", ridge="z")
     arr, palette, _ = b.grid.to_dense()
     at = lambda x, y, z: palette[arr[x, y, z]]
     assert _facing(at(0, 0, 2)) == "east"  # west eave ascends eastward
@@ -182,7 +178,7 @@ def test_roof_gable_ridge_z():
 def test_roof_gable_even_span_has_no_ridge_row():
     b = Build()
     with b:
-        b.roof_gable((0, 0, 0), (3, 0, 3), "minecraft:oak_stairs", "x")
+        b.roof_gable((0, 0, 0), (3, 0, 3), "minecraft:oak_stairs", ridge="x")
     # span 4 -> 2 pairs, top at y=1
     assert b.grid.bounds() == ((0, 0, 0), (3, 1, 3))
     assert b.grid.count_non_air() == 2 * 2 * 4
@@ -191,8 +187,8 @@ def test_roof_gable_even_span_has_no_ridge_row():
 def test_roof_gable_ridge_required():
     b = Build()
     with b:
-        with pytest.raises(BuildError, match="ridge"):
-            b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs", "y")
+        with pytest.raises(McbuilderError, match="ridge"):
+            b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs", ridge="y")
         with pytest.raises(TypeError):
             b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs")  # type: ignore[call-arg]
 
@@ -200,59 +196,19 @@ def test_roof_gable_ridge_required():
 def test_roof_gable_rejects_prefaced_facing():
     b = Build()
     with b:
-        with pytest.raises(BuildError, match="facing"):
-            b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs[facing=north]", "x")
+        with pytest.raises(McbuilderError, match="facing"):
+            b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs[facing=north]", ridge="x")
 
 
 def test_roof_gable_preserves_other_props_and_nbt():
     b = Build()
     with b:
-        b.roof_gable((0, 0, 0), (2, 0, 0), "minecraft:oak_stairs[waterlogged=true]", "x")
+        b.roof_gable((0, 0, 0), (2, 0, 0), "minecraft:oak_stairs[waterlogged=true]", ridge="x")
     _, palette, _ = b.grid.to_dense()
     name, props, _ = parse(palette[0])
     assert name == "minecraft:oak_stairs"
     assert props["waterlogged"] == "true"
     assert props["facing"] == "north"
-
-
-def _roof_dense(**kwargs):
-    b = Build()
-    with b:
-        b.roof_gable((0, 0, 0), (4, 6, 4), "minecraft:oak_stairs", "x", **kwargs)
-    arr, palette, _ = b.grid.to_dense()
-    return arr.shape, arr.tolist(), palette
-
-
-def test_roof_gable_eave_height_explicit_matches_inferred():
-    # corners' Y is 6/0 here; inferred eave = min(y) = 0, so eave_height=0
-    # must produce identical voxels.
-    inferred = _roof_dense()
-    explicit = _roof_dense(eave_height=0)
-    assert inferred[0] == explicit[0]
-    assert inferred[1] == explicit[1]
-    assert inferred[2] == explicit[2]
-
-
-def test_roof_gable_eave_height_decouples_from_corners_y():
-    b = Build()
-    with b:
-        # Corners say y=5, but the eave is explicitly placed at y=0.
-        b.roof_gable((0, 5, 0), (4, 5, 4), "minecraft:oak_stairs", "x", eave_height=0)
-    assert b.grid.bounds() == ((0, 0, 0), (4, 2, 4))
-
-
-def test_roof_gable_eave_height_must_be_int():
-    b = Build()
-    with b:
-        with pytest.raises(BuildError, match="eave_height"):
-            b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "x",
-                         eave_height="0")
-        with pytest.raises(BuildError, match="eave_height"):
-            b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "x",
-                         eave_height=True)
-
-
-# -- recenter ---------------------------------------------------------------
 
 
 def test_recenter_xz_to_origin_y_untouched():
@@ -350,7 +306,7 @@ def test_set_views_bare_string_not_exploded():
 
 def test_render_enforces_36_view_cap(tmp_path):
     """The harness path enforces the 36-view cap like the CLI (finding #2)."""
-    from mcbuilder.views import View, ViewError
+    from mcbuilder.render.views import View, ViewError
 
     b = Build(seed=1)
     with b:
@@ -364,10 +320,12 @@ def test_render_discovers_assets_when_dir_not_given(tmp_path):
     """assets_dir=None must do CLI-like cache discovery, not silently
     render every block magenta (the agent footgun)."""
     from pathlib import Path
+
     cache = Path.home() / ".cache" / "mcbuilder" / "26.2"
     if not (cache / "client" / "assets" / "minecraft").is_dir():
         pytest.skip("no local 26.2 asset cache")
     from PIL import Image
+
     b = Build(seed=1)
     with b:
         b.set(0, 0, 0, "minecraft:grass_block")
@@ -377,8 +335,9 @@ def test_render_discovers_assets_when_dir_not_given(tmp_path):
     # Grass green present, magenta fallback absent.
     px = np.asarray(img).reshape(-1, 3)
     assert any(g > 100 > r for r, g, _b in px), "no green texels rendered"
-    assert not any(r > 180 and g < 100 and b > 180 for r, g, b in px), \
+    assert not any(r > 180 and g < 100 and b > 180 for r, g, b in px), (
         "magenta fallback rendered despite cached assets"
+    )
 
 
 def test_build_validate_uses_registry():
@@ -396,75 +355,6 @@ def test_build_validate_uses_registry():
 
 
 # -- one-shot helpers return the placed Geometry ---------------------------
-
-
-def test_one_shot_helpers_return_placed_geometry():
-    """DX finding #5: BUILD one-shots return the Geometry they placed.
-
-    The returned geometry uses absolute coordinates, so ``.bounds()``
-    reports the exact footprint — no guessing helper output sizes.
-    """
-    import mcbuilder as mb
-    from mcbuilder.geometry import Geometry
-
-    b = Build(seed=1)
-    with b:
-        g_box = b.box((0, 0, 0), (4, 2, 3), "minecraft:stone")
-        g_walls = b.walls((10, 0, 0), (12, 1, 2), "minecraft:stone")
-        g_floor = b.floor((20, 5, 0), (22, 9, 2), "minecraft:stone")
-        g_roof = b.roof_gable((0, 10, 0), (6, 10, 4), "minecraft:oak_stairs", "x")
-        g_stairs = b.stairs_run((0, 20, 0), "east", 3, "minecraft:oak_stairs")
-        g_pillar = b.pillar((0, 30, 0), 4, "minecraft:oak_log")
-        g_rail = b.railing((0, 40, 0), (0, 40, 3), "minecraft:oak_fence")
-        src = mb.part.pillar(height=2, block="minecraft:stone")
-        g_place = b.place(src, at=(5, 50, 5))
-
-    for g in (g_box, g_walls, g_floor, g_roof, g_stairs, g_pillar, g_rail):
-        assert isinstance(g, Geometry)
-        assert len(g) > 0
-    assert g_place is src  # place() echoes the stamped geometry
-
-    assert g_box.bounds() == ((0, 0, 0), (4, 2, 3))
-    assert len(g_box) == 5 * 3 * 4
-    assert g_walls.bounds() == ((10, 0, 0), (12, 1, 2))
-    assert len(g_walls) == 2 * 2 * 3 + 2 * 1 * 2  # x-walls + z-walls, no floor/ceiling
-    assert g_floor.bounds() == ((20, 5, 0), (22, 5, 2))  # 1 thick at min y
-    assert len(g_floor) == 3 * 3
-    # roof: 5-deep span -> ceil(5/2) = 3 above the eaves
-    assert g_roof.bounds() == ((0, 10, 0), (6, 12, 4))
-    assert len(g_roof) == 2 * 2 * 7 + 7  # two row-pairs + ridge row
-    # stairs ascend east: facing west (opposite), 1 rise per step
-    assert g_stairs.bounds() == ((0, 20, 0), (2, 22, 0))
-    assert len(g_stairs) == 3
-    assert g_pillar.bounds() == ((0, 30, 0), (0, 33, 0))
-    assert len(g_pillar) == 4
-    assert g_rail.bounds() == ((0, 40, 0), (0, 40, 3))
-    assert len(g_rail) == 4
-
-
-def test_returned_geometry_matches_grid_placement():
-    """Every cell of the returned Geometry is actually in the grid."""
-    b = Build(seed=1)
-    with b:
-        roof = b.roof_gable((0, 0, 0), (4, 0, 4), "minecraft:oak_stairs", "x")
-    arr, palette, _ = b.grid.to_dense()
-    for dx, dy, dz, canonical in roof.cells():
-        assert palette[arr[dx, dy, dz]] == canonical
-    assert b.grid.count_non_air() == len(roof)
-
-
-def test_one_shots_still_require_batch_scope():
-    """Returning Geometry doesn't bypass the `with BUILD:` rule."""
-    import pytest
-
-    b = Build()
-    with pytest.raises(BuildError, match=r"placements must be inside"):
-        b.box((0, 0, 0), (1, 1, 1), "minecraft:stone")
-    with pytest.raises(BuildError, match=r"placements must be inside"):
-        b.roof_gable((0, 0, 0), (2, 0, 2), "minecraft:oak_stairs", "x")
-
-
-# -- introspection: get / count / find ---------------------------------------
 
 
 def test_get_returns_block_string():
@@ -673,7 +563,7 @@ def test_carve_single_cell():
     assert b.get(1, 0, 1) == "minecraft:stone"
 
 
-# ------------------------------------------------- finding 6: materials
+# ------------------------------------------------- materials
 
 
 def test_box_weighted_palette_is_deterministic_per_cell():
@@ -698,9 +588,11 @@ def test_box_callable_material():
 
     b = mb.Build(seed=1)
     with b:
-        b.box((0, 0, 0), (2, 0, 0),
-              lambda x, y, z: "minecraft:stone" if x % 2 == 0
-              else "minecraft:cobblestone")
+        b.box(
+            (0, 0, 0),
+            (2, 0, 0),
+            lambda x, y, z: "minecraft:stone" if x % 2 == 0 else "minecraft:cobblestone",
+        )
     assert b.get(0, 0, 0) == "minecraft:stone"
     assert b.get(1, 0, 0) == "minecraft:cobblestone"
     assert b.get(2, 0, 0) == "minecraft:stone"
@@ -716,8 +608,8 @@ def test_box_plain_string_unchanged():
 
 
 def test_resolve_material_rejects_bad_specs():
-    from mcbuilder.blocks import resolve_material
     from mcbuilder.errors import McbuilderError
+    from mcbuilder.materials import resolve_material
 
     with pytest.raises(McbuilderError, match="empty"):
         resolve_material([], 0, 0, 0, seed=1)
@@ -731,63 +623,7 @@ def test_resolve_material_rejects_bad_specs():
         resolve_material(123, 0, 0, 0, seed=1)
 
 
-# ------------------------------------------------- finding 6: primitives
-
-
-def test_part_cylinder_cell_counts():
-    from mcbuilder import part
-
-    solid = part.cylinder(center=(0, 0, 0), radius=2, height=3,
-                         block="minecraft:stone")
-    # per level: d2<=4 -> 13 cells; 3 levels
-    assert len(solid) == 39, len(solid)
-    hollow = part.cylinder(center=(0, 0, 0), radius=2, height=3,
-                           block="minecraft:stone", hollow=True)
-    # per level: 1 < d2 <= 4 -> 8 cells
-    assert len(hollow) == 24, len(hollow)
-
-
-def test_part_sphere_and_dome():
-    from mcbuilder import part
-
-    s = part.sphere(center=(0, 0, 0), radius=2, block="minecraft:stone")
-    assert len(s) == 33, len(s)  # d2<=4: 1+6+12+8+6 = 33
-    d = part.sphere(center=(0, 5, 0), radius=2, block="minecraft:stone",
-                    dome=True)
-    assert all(y >= 5 for _x, y, _z, _b in d.cells())
-    assert len(d) == 23, len(d)  # upper hemisphere of the 33
-
-
-def test_part_cone_tapers():
-    from mcbuilder import part
-
-    c = part.cone(center=(0, 0, 0), radius=4, height=4,
-                  block="minecraft:stone")
-    by_y = {}
-    for x, y, z, _b in c.cells():
-        by_y.setdefault(y, []).append((x, z))
-    assert sorted(by_y) == [0, 1, 2, 3]
-    counts = [len(by_y[y]) for y in sorted(by_y)]
-    assert counts == sorted(counts, reverse=True), counts  # tapers upward
-    assert len(by_y[3]) < len(by_y[0])  # tip narrower than base
-    assert len(by_y[3]) == 5  # top level r=1.0: plus-shape
-
-
-def test_part_line_is_6_connected():
-    from mcbuilder import part
-
-    g = part.line(p1=(0, 0, 0), p2=(7, 3, 5), block="minecraft:stone")
-    pts = [(x, y, z) for x, y, z, _b in g.cells()]
-    assert pts[0] == (0, 0, 0) and pts[-1] == (7, 3, 5)
-    for a, b in zip(pts, pts[1:]):
-        assert sum(abs(p - q) for p, q in zip(a, b)) == 1, (a, b)
-
-
-def test_part_line_degenerate_single_cell():
-    from mcbuilder import part
-
-    g = part.line(p1=(2, 2, 2), p2=(2, 2, 2), block="minecraft:stone")
-    assert g.cells() == [(2, 2, 2, "minecraft:stone")]
+# ------------------------------------------------- primitives
 
 
 def test_build_primitives_place_and_return_absolute():

@@ -1,9 +1,9 @@
-"""Schema tests for mcbuilder.report (PLAN section 4.6)."""
+"""Schema tests for mcbuilder.report."""
 
 import json
 
+from mcbuilder.render.views import View
 from mcbuilder.report import build_report, view_entry, write_report
-from mcbuilder.views import View
 
 
 def _sample_views():
@@ -13,8 +13,14 @@ def _sample_views():
 
 def test_schema_keys():
     report = build_report(
-        errors=[{"block": "minecraft:ston", "message": "unknown block",
-                 "suggestions": ["minecraft:stone"], "at": "waystone.py:42"}],
+        errors=[
+            {
+                "block": "minecraft:ston",
+                "message": "unknown block",
+                "suggestions": ["minecraft:stone"],
+                "at": "waystone.py:42",
+            }
+        ],
         warnings=[{"code": "bbox_blowup", "message": ">80% air"}],
         block_counts={"minecraft:stone": 12},
         dimensions=(9, 8, 9),
@@ -22,9 +28,15 @@ def test_schema_keys():
         run_dir="dist/run-003",
     )
     assert set(report.keys()) == {
-        "errors", "warnings", "block_counts",
-        "dimensions", "views", "artifacts", "run_dir",
-        "overwritten_placements", "origin",
+        "errors",
+        "warnings",
+        "block_counts",
+        "dimensions",
+        "views",
+        "artifacts",
+        "run_dir",
+        "overwritten_placements",
+        "origin",
     }
     assert report["artifacts"] == []
     assert report["dimensions"] == {"x": 9, "y": 8, "z": 9}
@@ -46,7 +58,10 @@ def test_view_entry_shape():
 def test_error_at_may_be_null():
     report = build_report(
         errors=[{"block": "x", "message": "m", "suggestions": [], "at": None}],
-        warnings=[], block_counts={}, dimensions=None, views=[],
+        warnings=[],
+        block_counts={},
+        dimensions=None,
+        views=[],
         run_dir="dist/run-001",
     )
     assert report["errors"][0]["at"] is None
@@ -55,15 +70,17 @@ def test_error_at_may_be_null():
 
 def test_inputs_are_copied():
     errors = [{"block": "x", "message": "m", "suggestions": [], "at": None}]
-    report = build_report(errors=errors, warnings=[], block_counts={},
-                          dimensions=None, views=[], run_dir="r")
+    report = build_report(
+        errors=errors, warnings=[], block_counts={}, dimensions=None, views=[], run_dir="r"
+    )
     errors[0]["block"] = "mutated"
     assert report["errors"][0]["block"] == "x"
 
 
 def test_write_report_json_round_trip(tmp_path):
     report = build_report(
-        errors=[], warnings=[],
+        errors=[],
+        warnings=[],
         block_counts={"minecraft:stone": 3},
         dimensions=(3, 3, 3),
         views=_sample_views(),

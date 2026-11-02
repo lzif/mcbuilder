@@ -25,7 +25,6 @@ from mcbuilder.assets import AssetError
 from mcbuilder.cli import main
 from mcbuilder.registry import Registry
 
-
 HANDMADE_BLOCKS = {
     "minecraft:stone": {"properties": {}},
     "minecraft:oak_planks": {"properties": {}},
@@ -34,17 +33,9 @@ HANDMADE_BLOCKS = {
 
 
 @pytest.fixture(autouse=True)
-def _pin_hashseed(monkeypatch):
-    # main() re-execs the process when PYTHONHASHSEED is unset; pin it here.
-    monkeypatch.setenv("PYTHONHASHSEED", "0")
-
-
-@pytest.fixture(autouse=True)
 def _registry(monkeypatch):
     reg = Registry(HANDMADE_BLOCKS, "test")
-    monkeypatch.setattr(
-        Registry, "load", classmethod(lambda cls, version, cache_dir: reg)
-    )
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, version, cache_dir: reg))
     return reg
 
 
@@ -136,6 +127,7 @@ def _with_config(tmp_path: Path) -> Path:
 # check
 # ---------------------------------------------------------------------------
 
+
 def test_check_valid_script_passes(tmp_path, capsys):
     script = _write(tmp_path, "hut.py", VALID_SCRIPT)
     _with_config(tmp_path)
@@ -155,7 +147,7 @@ def test_check_unknown_block_fails_with_provenance(tmp_path, capsys):
     assert "minecraft:ston" in out
     assert "did you mean" in out  # real registry suggestions
     # provenance join: error carries file:line of the bad placement
-    assert f"bad.py:" in out
+    assert "bad.py:" in out
     assert "Traceback" not in out + err
 
 
@@ -241,6 +233,7 @@ def test_check_explicit_config_missing_is_clean_error(tmp_path, capsys):
 # run
 # ---------------------------------------------------------------------------
 
+
 def test_run_creates_run001_with_report(tmp_path, capsys):
     script = _write(tmp_path, "hut.py", VALID_SCRIPT)
     _with_config(tmp_path)
@@ -261,9 +254,7 @@ def test_run_creates_run001_with_report(tmp_path, capsys):
     assert report["run_dir"] == str(run)
     # the .nbt deploy artifact is written and recorded in report.json
     assert (run / "hut.nbt").is_file()
-    assert report["artifacts"] == [
-        {"file": "hut.nbt", "format": "nbt", "data_version": 4189}
-    ]
+    assert report["artifacts"] == [{"file": "hut.nbt", "format": "nbt", "data_version": 4189}]
     assert not any("deploy format pending" in str(w) for w in report["warnings"])
 
     out, err = capsys.readouterr()
@@ -285,7 +276,7 @@ def test_run_with_preview_uses_script_views(tmp_path):
     script = _write(tmp_path, "hut.py", VALID_SCRIPT)
     _with_config(tmp_path)
     out_dir = tmp_path / "dist"
-    assert main(["run", str(script), "--out", str(out_dir), "--preview"]) == 0
+    assert main(["run", str(script), "--out", str(out_dir), "--preview", "--tier", "all"]) == 0
 
     run = out_dir / "run-001"
     previews = sorted((run / "previews").glob("*.png"))
@@ -329,7 +320,19 @@ def test_run_views_flag_overrides_script_config(tmp_path):
     _with_config(tmp_path)
     out_dir = tmp_path / "dist"
     assert (
-        main(["run", str(script), "--out", str(out_dir), "--preview", "--views", "iso"])
+        main(
+            [
+                "run",
+                str(script),
+                "--out",
+                str(out_dir),
+                "--preview",
+                "--tier",
+                "all",
+                "--views",
+                "iso",
+            ]
+        )
         == 0
     )
     previews = list((out_dir / "run-001" / "previews").glob("*.png"))
@@ -341,8 +344,21 @@ def test_run_tier_flag_renders_only_that_tier(tmp_path):
     _with_config(tmp_path)
     out_dir = tmp_path / "dist"
     assert (
-        main(["run", str(script), "--out", str(out_dir), "--preview",
-              "--tier", "faithful", "--views", "iso"])
+        main(
+            [
+                "run",
+                str(script),
+                "--out",
+                str(out_dir),
+                "--preview",
+                "--tier",
+                "all",
+                "--tier",
+                "faithful",
+                "--views",
+                "iso",
+            ]
+        )
         == 0
     )
     run = out_dir / "run-001"
@@ -359,7 +375,19 @@ def test_run_count_appends_orbit(tmp_path):
     _with_config(tmp_path)
     out_dir = tmp_path / "dist"
     assert (
-        main(["run", str(script), "--out", str(out_dir), "--preview", "--count", "4"])
+        main(
+            [
+                "run",
+                str(script),
+                "--out",
+                str(out_dir),
+                "--preview",
+                "--tier",
+                "all",
+                "--count",
+                "4",
+            ]
+        )
         == 0
     )
     # 2 script views + 4-orbit appended
@@ -371,7 +399,7 @@ def test_run_errors_skip_preview_and_artifact(tmp_path, capsys):
     script = _write(tmp_path, "bad.py", UNKNOWN_BLOCK_SCRIPT)
     _with_config(tmp_path)
     out_dir = tmp_path / "dist"
-    assert main(["run", str(script), "--out", str(out_dir), "--preview"]) == 1
+    assert main(["run", str(script), "--out", str(out_dir), "--preview", "--tier", "all"]) == 1
 
     run = out_dir / "run-001"
     report = json.loads((run / "report.json").read_text(encoding="utf-8"))
@@ -408,7 +436,7 @@ def test_export_artifact_writes_nbt(tmp_path):
         b.box((0, 0, 0), (1, 0, 1), "minecraft:stone")
     cfg = config_mod.McbuildConfig(mc_version="1.21.4")
     path, data_version, warnings = cli._export_artifact(
-        b.grid, tmp_path, "hut", cfg=cfg, include_air=False
+        b.grid, tmp_path, "hut", cfg=cfg, air="none"
     )
     assert path == tmp_path / "hut.nbt"
     assert data_version == 4189
@@ -422,6 +450,7 @@ def test_export_artifact_writes_nbt(tmp_path):
 # ---------------------------------------------------------------------------
 # assets
 # ---------------------------------------------------------------------------
+
 
 def test_assets_fetch_help_says_textures_are_included(capsys):
     with pytest.raises(SystemExit) as exc:
@@ -508,11 +537,9 @@ def test_run_reports_fallback_blocks_as_warnings(tmp_path, monkeypatch):
     # Force missing textures: the real ~/.cache may hold fetched assets.
     empty = tmp_path / "no-assets"
     empty.mkdir()
-    monkeypatch.setattr(
-        "mcbuilder.config.McbuildConfig.resolve_assets_dir", lambda self: empty
-    )
+    monkeypatch.setattr("mcbuilder.config.McbuildConfig.resolve_assets_dir", lambda self: empty)
     out_dir = tmp_path / "dist"
-    assert main(["run", str(script), "--out", str(out_dir), "--preview"]) == 0
+    assert main(["run", str(script), "--out", str(out_dir), "--preview", "--tier", "all"]) == 0
     report = json.loads((out_dir / "run-001" / "report.json").read_text())
     msgs = [w["message"] for w in report["warnings"]]
     assert any("minecraft:stone" in m and "fallback" in m for m in msgs)
@@ -533,7 +560,18 @@ def test_run_reports_overwritten_placements(tmp_path, capsys):
 # init
 # ---------------------------------------------------------------------------
 
+_STAIR_PROPS = {
+    "facing": ["north", "south", "east", "west"],
+    "half": ["top", "bottom"],
+    "shape": ["straight", "inner_left", "inner_right", "outer_left", "outer_right"],
+    "waterlogged": ["true", "false"],
+}
+
 HOUSE_BLOCKS = {
+    "minecraft:dark_oak_stairs": {"properties": _STAIR_PROPS},
+    "minecraft:stripped_oak_wood": {"properties": {"axis": ["x", "y", "z"]}},
+    "minecraft:oak_log": {"properties": {"axis": ["x", "y", "z"]}},
+    "minecraft:glass_pane": {"properties": {}},
     "minecraft:cobblestone": {"properties": {}},
     "minecraft:oak_planks": {"properties": {}},
     "minecraft:air": {"properties": {}},
@@ -565,9 +603,7 @@ HOUSE_BLOCKS = {
 
 def _house_registry(monkeypatch):
     reg = Registry(HOUSE_BLOCKS, "test")
-    monkeypatch.setattr(
-        Registry, "load", classmethod(lambda cls, version, cache_dir: reg)
-    )
+    monkeypatch.setattr(Registry, "load", classmethod(lambda cls, version, cache_dir: reg))
 
 
 def test_init_writes_default_house_py(tmp_path, monkeypatch, capsys):
@@ -624,20 +660,30 @@ def test_init_trailing_slash_writes_inside_dir(tmp_path, capsys):
     assert "scaffold" in out
 
 
-def test_init_template_matches_guide_recipe():
-    """Pin the HOUSE_TEMPLATE <-> GUIDE §2 coupling.
-
-    The template's 5-line header is init-specific; the recipe body must
-    appear verbatim in the template, so a GUIDE §2 edit can't silently
-    drift the scaffold (or vice versa).
-    """
+def test_init_template_matches_getting_started():
+    """The scaffold written by `mcbuild init` is the first example in
+    docs/getting-started.md, verbatim, so the two can't drift apart."""
     from mcbuilder import cli as cli_mod
 
-    guide = Path(__file__).resolve().parent.parent / "docs" / "GUIDE.md"
-    section = guide.read_text(encoding="utf-8").split(
-        "## 2. Five-minute house", 1
-    )[1]
-    block = section.split("```python", 1)[1].split("```", 1)[0]
-    recipe_lines = block.strip("\n").splitlines()
-    assert recipe_lines[0].strip() == "# house.py"
-    assert "\n".join(recipe_lines[1:]) in cli_mod.HOUSE_TEMPLATE
+    doc = Path(__file__).resolve().parent.parent / "docs" / "getting-started.md"
+    blocks = doc.read_text(encoding="utf-8").split("```python\n")[1:]
+    house = next(b.split("```", 1)[0] for b in blocks if b.startswith("# house.py"))
+    assert house == cli_mod.HOUSE_TEMPLATE
+
+
+def test_parse_focus():
+    from mcbuilder.cli import CliError, _parse_focus
+
+    assert _parse_focus("0,1,2:3,4,5") == ((0, 1, 2), (3, 4, 5))
+    with pytest.raises(CliError):
+        _parse_focus("0,1:3,4,5")
+
+
+def test_grid_crop_keeps_only_box():
+    import mcbuilder as mb
+
+    b = mb.Build()
+    with b:
+        b.box((0, 0, 0), (9, 0, 9), "minecraft:stone")
+    sub = b.grid.crop((0, 0, 0), (1, 0, 1))
+    assert sub.count_non_air() == 4

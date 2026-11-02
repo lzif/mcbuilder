@@ -32,12 +32,13 @@ from mcbuilder import config as config_mod
 from mcbuilder import diff as diff_mod
 from mcbuilder import errors as errors_mod
 from mcbuilder import export_nbt as export_nbt_mod
-from mcbuilder import preview as preview_mod
-from mcbuilder import preview_trusted as preview_trusted_mod
-from mcbuilder import preview_faithful as preview_faithful_mod
+from mcbuilder import guide as guide_mod
 from mcbuilder import registry as registry_mod
 from mcbuilder import report as report_mod
-from mcbuilder import views as views_mod
+from mcbuilder.render import faithful as faithful_mod
+from mcbuilder.render import fast as fast_mod
+from mcbuilder.render import trusted as trusted_mod
+from mcbuilder.render import views as views_mod
 
 DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "mcbuilder"
 MAX_VIEWS = views_mod.MAX_VIEWS
@@ -50,6 +51,7 @@ class CliError(Exception):
 # ---------------------------------------------------------------------------
 # script loading
 # ---------------------------------------------------------------------------
+
 
 def _script_module_name(path: Path) -> str:
     # Stable per path so re-checks don't accumulate stale modules; the entry
@@ -91,22 +93,18 @@ def _load_script(path: Path):
             if isinstance(e, errors_mod.McbuilderError):
                 # DSL misuse: lead with the message, point at the script line.
                 raise CliError(f"{path.name}: {e}{at}") from None
-            raise CliError(
-                f"failed to import {path.name}: {type(e).__name__}: {e}{at}"
-            ) from None
+            raise CliError(f"failed to import {path.name}: {type(e).__name__}: {e}{at}") from None
     finally:
         if path_added:
             sys.path.remove(script_dir)
     build_obj = getattr(module, "BUILD", None)
     if build_obj is None:
         raise CliError(
-            f"{path.name} does not define BUILD "
-            "(module-level mcbuilder.Build instance is required)"
+            f"{path.name} does not define BUILD (module-level mcbuilder.Build instance is required)"
         )
     if not isinstance(build_obj, build_mod.Build):
         raise CliError(
-            f"{path.name}: BUILD must be a mcbuilder.Build instance, "
-            f"got {type(build_obj).__name__}"
+            f"{path.name}: BUILD must be a mcbuilder.Build instance, got {type(build_obj).__name__}"
         )
     return module, build_obj
 
@@ -139,6 +137,7 @@ def _script_error_location(exc: BaseException, script_path: Path) -> str | None:
 # ---------------------------------------------------------------------------
 # determinism static check (plan §2: warn, don't error)
 # ---------------------------------------------------------------------------
+
 
 def _scan_determinism(source: str, filename: str) -> list[str]:
     """Warn on raw ``random`` / ``np.random`` imports.
@@ -190,6 +189,7 @@ def _scan_determinism(source: str, filename: str) -> list[str]:
 # config / registry
 # ---------------------------------------------------------------------------
 
+
 def _resolve_config(script_path: Path, explicit: str | None):
     """Explicit --config wins; otherwise discover mcbuild.toml from the script dir.
 
@@ -229,6 +229,7 @@ def _load_registry(cfg):
 # validation + provenance
 # ---------------------------------------------------------------------------
 
+
 def _join_provenance(errors: list, palette: list[str], provenance: dict) -> list:
     """Attach ``at: "file:line"`` to each error via the palette-index provenance map."""
     for err in errors:
@@ -264,14 +265,14 @@ def _load_and_validate(script_arg: str, config_arg: str | None) -> dict:
         "dense": arr,
         "palette": palette,
         "errors": errors,
-        "warnings": list(warnings)
-        + [{"message": w} for w in det_warnings],
+        "warnings": list(warnings) + [{"message": w} for w in det_warnings],
     }
 
 
 # ---------------------------------------------------------------------------
 # views
 # ---------------------------------------------------------------------------
+
 
 def _resolve_views(args, build_obj) -> list:
     """CLI --views/--count > script views_config > default_views(). Max 36."""
@@ -303,6 +304,7 @@ def _resolve_views(args, build_obj) -> list:
 # ---------------------------------------------------------------------------
 # report helpers
 # ---------------------------------------------------------------------------
+
 
 def _block_counts(arr: np.ndarray, palette: list[str]) -> dict[str, int]:
     """Survival material/shopping list: post-crop, air excluded.
@@ -341,14 +343,14 @@ def _fmt_issue(issue) -> str:
     if isinstance(issue, dict):
         msg = str(issue.get("message", issue))
         at = issue.get("at")
-        sug = issue.get("suggestion", issue.get("did_you_mean"))
-        if sug is None:
-            sugs = issue.get("suggestions") or []
-            sug = ", ".join(str(s) for s in sugs) if sugs else None
+        sugs = issue.get("suggestions") or []
+        one = issue.get("suggestion", issue.get("did_you_mean"))
+        if one is not None:
+            sugs = [one]
         if at:
             msg += f" (at {at})"
-        if sug:
-            msg += f" — did you mean '{sug}'?"
+        if sugs:
+            msg += " — did you mean " + " or ".join(str(s) for s in sugs) + "?"
         return msg
     return str(issue)
 
@@ -357,8 +359,9 @@ def _fmt_issue(issue) -> str:
 # artifact export (.nbt serializer)
 # ---------------------------------------------------------------------------
 
+
 def _export_artifact(
-    grid, run_dir: Path, stem: str, *, cfg, include_air: bool
+    grid, run_dir: Path, stem: str, *, cfg, air: str
 ) -> tuple[Path, int, list[str]]:
     """Write the vanilla structure-block ``.nbt`` deploy artifact.
 
@@ -367,16 +370,12 @@ def _export_artifact(
     resolved or the grid can't be exported.
     """
     try:
-        data_version = export_nbt_mod.resolve_data_version(
-            cfg.mc_version, cfg.resolve_assets_dir()
-        )
+        data_version = export_nbt_mod.resolve_data_version(cfg.mc_version, cfg.resolve_assets_dir())
     except export_nbt_mod.ExportError as e:
         raise CliError(str(e)) from None
     out = run_dir / f"{stem}.nbt"
     try:
-        warnings = export_nbt_mod.write_structure_nbt(
-            grid, out, data_version=data_version, include_air=include_air
-        )
+        warnings = export_nbt_mod.write_structure_nbt(grid, out, data_version=data_version, air=air)
     except export_nbt_mod.ExportError as e:
         raise CliError(str(e)) from None
     return out, data_version, warnings
@@ -385,6 +384,7 @@ def _export_artifact(
 # ---------------------------------------------------------------------------
 # run dirs
 # ---------------------------------------------------------------------------
+
 
 def _next_run_dir(out: Path) -> Path:
     out.mkdir(parents=True, exist_ok=True)
@@ -399,6 +399,20 @@ def _next_run_dir(out: Path) -> Path:
 # ---------------------------------------------------------------------------
 # subcommands
 # ---------------------------------------------------------------------------
+
+
+def _parse_focus(spec: str):
+    """``"x0,y0,z0:x1,y1,z1"`` -> two corner tuples."""
+    try:
+        a, b = spec.split(":")
+        c1 = tuple(int(v) for v in a.split(","))
+        c2 = tuple(int(v) for v in b.split(","))
+        if len(c1) != 3 or len(c2) != 3:
+            raise ValueError
+    except ValueError:
+        raise CliError(f"--focus must look like x0,y0,z0:x1,y1,z1, got {spec!r}") from None
+    return c1, c2
+
 
 def cmd_check(args) -> int:
     ctx = _load_and_validate(args.script, args.config)
@@ -435,12 +449,18 @@ def cmd_run(args) -> int:
     preview_paths: list[Path] = []
     trusted_paths: list[Path] = []
     faithful_paths: list[Path] = []
-    want = args.tier  # None = all tiers
+    want = None if args.tier == "all" else args.tier  # None = every tier
+    render_grid = grid
+    if args.focus:
+        c1, c2 = _parse_focus(args.focus)
+        render_grid = grid.crop(c1, c2)
+        if render_grid.count_non_air() == 0:
+            raise CliError(f"--focus {args.focus}: no blocks inside that box")
     if not errors and args.preview:
         if want in (None, "fast"):
             try:
-                result = preview_mod.render(
-                    grid, previews_dir, view_list, ctx["config"].resolve_assets_dir()
+                result = fast_mod.render(
+                    render_grid, previews_dir, view_list, ctx["config"].resolve_assets_dir()
                 )
                 preview_paths = list(result)
             except Exception as e:  # noqa: BLE001 - clean message, no traceback
@@ -456,15 +476,13 @@ def cmd_run(args) -> int:
                     }
                 )
         if want in (None, "trusted"):
-            # PLAN §3 direction-trusted tier: orientation-truthful geometry,
+            # Direction-trusted tier: orientation-truthful geometry,
             # no textures needed. One warning per untrusted block type.
             try:
-                tresult = preview_trusted_mod.render(grid, trusted_dir, view_list, None)
+                tresult = trusted_mod.render(render_grid, trusted_dir, view_list, None)
                 trusted_paths = list(tresult)
             except Exception as e:  # noqa: BLE001 - clean message, no traceback
-                raise CliError(
-                    f"trusted preview render failed: {type(e).__name__}: {e}"
-                ) from None
+                raise CliError(f"trusted preview render failed: {type(e).__name__}: {e}") from None
             for name, n in tresult.info.get("untrusted_blocks", {}).items():
                 warnings.append(
                     {
@@ -475,21 +493,22 @@ def cmd_run(args) -> int:
                     }
                 )
         if want in (None, "faithful"):
-            # PLAN §3 faithful tier (v0.3): real model geometry + real
-            # textures, Shadow Court presentation. One warning per
+            # Faithful tier: real model geometry + real
+            # textures, presentation look. One warning per
             # untrusted block type.
             try:
                 title = stem.replace("_", " ").title()
-                fresult = preview_faithful_mod.render(
-                    grid, faithful_dir, view_list,
+                fresult = faithful_mod.render(
+                    render_grid,
+                    faithful_dir,
+                    view_list,
                     ctx["config"].resolve_assets_dir(),
-                    presentation=True, title=title,
+                    presentation=True,
+                    title=title,
                 )
                 faithful_paths = list(fresult)
             except Exception as e:  # noqa: BLE001 - clean message, no traceback
-                raise CliError(
-                    f"faithful preview render failed: {type(e).__name__}: {e}"
-                ) from None
+                raise CliError(f"faithful preview render failed: {type(e).__name__}: {e}") from None
             for name, n in fresult.info.get("untrusted_blocks", {}).items():
                 warnings.append(
                     {
@@ -511,7 +530,11 @@ def cmd_run(args) -> int:
 
     if not errors:
         artifact_path, data_version, export_warnings = _export_artifact(
-            grid, run_dir, stem, cfg=ctx["config"], include_air=args.include_air
+            grid,
+            run_dir,
+            stem,
+            cfg=ctx["config"],
+            air=args.air,
         )
         warnings.extend({"message": w} for w in export_warnings)
         try:
@@ -525,6 +548,16 @@ def cmd_run(args) -> int:
                 "data_version": data_version,
             }
         ]
+        if args.guide:
+            iso = faithful_dir / "iso.png"
+            guide_path = guide_mod.write_guide(
+                grid,
+                run_dir / "guide",
+                ctx["config"].resolve_assets_dir(),
+                title=stem.replace("_", " ").title(),
+                cover="../previews_faithful/iso.png" if iso.is_file() else None,
+            )
+            artifacts.append({"file": str(guide_path.relative_to(run_dir)), "format": "guide"})
     else:
         artifacts = []
 
@@ -536,16 +569,14 @@ def cmd_run(args) -> int:
             rel = Path(p.name)
         # Fast tier: flat textures, directions not trustworthy.
         views_array.append(
-            report_mod.view_entry(
-                file=str(rel), view=view, directions_untrusted=True
-            )
+            report_mod.view_entry(file=str(rel), view=view, directions_untrusted=True)
         )
     for view, p in zip(view_list, trusted_paths):
         try:
             rel = p.relative_to(run_dir)
         except ValueError:
             rel = Path(p.name)
-        # Trusted tier (PLAN §3): orientation-truthful geometry.
+        # Trusted tier: orientation-truthful geometry.
         views_array.append(
             report_mod.view_entry(
                 file=str(rel),
@@ -559,7 +590,7 @@ def cmd_run(args) -> int:
             rel = p.relative_to(run_dir)
         except ValueError:
             rel = Path(p.name)
-        # Faithful tier (PLAN §3 v0.3): real geometry + real textures.
+        # Faithful tier: real geometry + real textures.
         views_array.append(
             report_mod.view_entry(
                 file=str(rel),
@@ -595,9 +626,7 @@ def cmd_run(args) -> int:
     try:
         report_mod.write_report(report, run_dir / "report.json")
     except Exception as e:  # noqa: BLE001 - clean message, no traceback
-        raise CliError(
-            f"failed to write report.json: {type(e).__name__}: {e}"
-        ) from None
+        raise CliError(f"failed to write report.json: {type(e).__name__}: {e}") from None
 
     n_blocks = int(grid.count_non_air())
     dims = _dimensions(grid, arr)
@@ -617,14 +646,43 @@ def cmd_run(args) -> int:
         print(f"  trusted previews: {len(trusted_paths)} in {trusted_dir.name}/")
     if faithful_paths:
         print(f"  faithful previews: {len(faithful_paths)} in {faithful_dir.name}/")
-    if artifacts:
-        a = artifacts[0]
-        print(f"  artifact: {a['file']} ({a['format']}, DataVersion {a['data_version']})")
+    for a in artifacts:
+        if a["format"] == "guide":
+            print(f"  guide: {a['file']}")
+        else:
+            print(f"  artifact: {a['file']} ({a['format']}, DataVersion {a['data_version']})")
     for e in errors:
         print(f"  error: {_fmt_issue(e)}")
     for w in warnings:
         print(f"  warning: {_fmt_issue(w)}")
     return 1 if errors else 0
+
+
+def cmd_import(args) -> int:
+    from mcbuilder import importer
+
+    src = Path(args.file)
+    if not src.is_file():
+        raise CliError(f"no such file: {src}")
+    out = Path(args.output) if args.output else src.with_suffix(".py")
+    if out.exists() and not args.force:
+        raise CliError(f"refusing to overwrite {out} (use --force)")
+    try:
+        registry = None
+        if not args.raw:
+            try:
+                registry = _load_registry(_resolve_config(src.resolve(), args.config))
+            except CliError as e:
+                print(f"warning: properties not cleaned ({e})", file=sys.stderr)
+        structure = importer.read_structure(src, keep_air=args.keep_air, registry=registry)
+    except importer.StructureImportError as e:
+        raise CliError(str(e)) from None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(importer.to_script(structure), encoding="utf-8")
+    print(f"wrote {out}")
+    for line in importer.summary(structure, top=10):
+        print(f"  {line}" if line else "")
+    return 0
 
 
 def cmd_diff(args) -> int:
@@ -644,9 +702,7 @@ def cmd_diff(args) -> int:
     diff = diff_mod.diff_run_dirs(a_dir, b_dir)
     print(diff_mod.format_diff(diff, a_dir.name, b_dir.name, max_entries=args.max))
     out_path = runs_dir / f"diff-{a_dir.name}-{b_dir.name}.png"
-    made = diff_mod.comparison_image(
-        a_dir, b_dir, diff, out_path, a_id=a_dir.name, b_id=b_dir.name
-    )
+    made = diff_mod.comparison_image(a_dir, b_dir, diff, out_path, a_id=a_dir.name, b_id=b_dir.name)
     if made is not None:
         print(f"  comparison: {made}")
     else:
@@ -655,9 +711,7 @@ def cmd_diff(args) -> int:
 
 
 def cmd_assets_fetch(args) -> int:
-    cache_dir = (
-        Path(args.cache_dir).expanduser() if args.cache_dir else DEFAULT_CACHE_ROOT
-    )
+    cache_dir = Path(args.cache_dir).expanduser() if args.cache_dir else DEFAULT_CACHE_ROOT
     try:
         result = assets_mod.fetch(args.version, cache_dir, force=args.force)
     except errors_mod.AssetError as e:
@@ -677,37 +731,36 @@ def cmd_assets_fetch(args) -> int:
 # The 5-line header is init-specific. The coupling is pinned by
 # tests/test_cli.py::test_init_template_matches_guide_recipe — if the recipe
 # changes in either place, update the other.
-HOUSE_TEMPLATE = '''\
-# house.py — starter mcbuilder build (written by `mcbuild init`).
+HOUSE_TEMPLATE = """\
+# house.py: starter build written by `mcbuild init`.
 #
-# The loop:  mcbuild check house.py  ->  mcbuild run house.py --preview
-# Look at the pictures, tweak the numbers, re-run. No factories, no shared
-# modules — one asymmetric, one-off build.
+# Loop:  mcbuild check house.py   ->   mcbuild run house.py --preview
+# Look at the previews, change numbers, run again.
 import mcbuilder as mb
 
-BUILD = mb.Build(seed=1)
+BUILD = mb.Build(seed=1, views="iso;az225_el025;top")
+
+WALL = mb.patches([("minecraft:oak_planks", 3), "minecraft:stripped_oak_wood"], scale=3)
 
 with BUILD:
-    # floor + walls: 7 x 5 footprint, walls 3 high
-    BUILD.floor((0, 0, 0), (6, 0, 4), "minecraft:cobblestone")
-    BUILD.walls((0, 1, 0), (6, 3, 4), "minecraft:oak_planks")
+    # 7 x 5 footprint: cobblestone floor, plank walls 3 high
+    BUILD.box((0, 0, 0), (6, 0, 4), "minecraft:cobblestone")
+    BUILD.walls((0, 1, 0), (6, 3, 4), WALL)
+    for x, z in ((0, 0), (6, 0), (0, 4), (6, 4)):
+        BUILD.pillar((x, 1, z), 3, "minecraft:oak_log[axis=y]")
 
-    # doorway (north wall) + window (south wall): carve with air, hang the door
-    BUILD.box((3, 1, 0), (3, 2, 0), "minecraft:air")
-    BUILD.box((1, 2, 4), (2, 2, 4), "minecraft:air")
+    # door (north wall) and a window (south wall)
     BUILD.set(3, 1, 0, "minecraft:oak_door[facing=north,half=lower,hinge=left]")
     BUILD.set(3, 2, 0, "minecraft:oak_door[facing=north,half=upper,hinge=left]")
+    BUILD.box((2, 2, 4), (4, 2, 4), "minecraft:glass_pane")
 
-    # gable roof: ridge along x, 1-block overhang, eaves at y=4.
-    # Span is 7 deep (z -1..5), so it rises ceil(7/2) = 4 above the eaves.
-    roof = BUILD.roof_gable(
-        (-1, 4, -1), (7, 4, 5), "minecraft:spruce_stairs", ridge="x"
-    )
-
-    # chimney sized from the roof's ACTUAL peak — no guessing, no source-diving:
+    # gable roof with a 1-block overhang; shapes return what they placed,
+    # so the chimney can be sized from the roof's real peak
+    roof = BUILD.roof_gable((-1, 4, -1), (7, 4, 5), "minecraft:spruce_stairs",
+                            ridge="x", verge="minecraft:dark_oak_stairs")
     (_, _, _), (_, peak, _) = roof.bounds()
-    BUILD.box((5, peak - 1, 1), (5, peak + 2, 1), "minecraft:cobblestone")
-'''
+    BUILD.box((5, 1, 3), (5, peak + 1, 3), "minecraft:cobblestone")
+"""
 
 
 def cmd_init(args) -> int:
@@ -718,10 +771,7 @@ def cmd_init(args) -> int:
     if target.is_dir():
         raise CliError(f"not a file: {target}")
     if target.exists() and not args.force:
-        raise CliError(
-            f"refusing to overwrite existing file: {target} "
-            "(pass --force to overwrite)"
-        )
+        raise CliError(f"refusing to overwrite existing file: {target} (pass --force to overwrite)")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(HOUSE_TEMPLATE, encoding="utf-8")
     print(f"wrote {target}")
@@ -734,12 +784,12 @@ def cmd_init(args) -> int:
 # argparse + entry point
 # ---------------------------------------------------------------------------
 
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mcbuild",
         description=(
-            "mcbuilder CLI — validate, export and preview agent-built "
-            "Minecraft structures."
+            "mcbuilder CLI — validate, export and preview agent-built Minecraft structures."
         ),
     )
     sub = p.add_subparsers(dest="command", required=True, metavar="<command>")
@@ -791,16 +841,27 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--preview",
         action="store_true",
-        help="render preview PNGs into <run>/previews/ (fast tier), "
-        "<run>/previews_trusted/ (PLAN §3 direction-trusted tier) and "
-        "<run>/previews_faithful/ (PLAN §3 v0.3 faithful tier); "
-        "use --tier to render only one",
+        help="render preview PNGs into the run dir (see --tier)",
     )
     r.add_argument(
         "--tier",
-        choices=("fast", "trusted", "faithful"),
+        choices=("faithful", "fast", "trusted", "all"),
+        default="faithful",
+        help="preview tier: faithful (real models + textures, default), "
+        "fast (textured cubes), trusted (orientation check), or all",
+    )
+    r.add_argument(
+        "--guide",
+        action="store_true",
+        help="also write a layer-by-layer build guide into <run>/guide/ "
+        "(plan image + material list per layer, guide.md)",
+    )
+    r.add_argument(
+        "--focus",
         default=None,
-        help="with --preview, render only this tier (default: all three)",
+        metavar="X0,Y0,Z0:X1,Y1,Z1",
+        help="render previews of only this box: a close-up of part of a "
+        "large build (the .nbt is still the whole build)",
     )
     r.add_argument(
         "--views",
@@ -820,9 +881,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="path to mcbuild.toml (default: discover from the script's directory)",
     )
     r.add_argument(
-        "--include-air",
-        action="store_true",
-        help="include air blocks in the deploy artifact",
+        "--air",
+        choices=export_nbt_mod.AIR_MODES,
+        default="none",
+        help="air cells in the deploy artifact: 'none' (default) writes no "
+        "air; 'explicit' writes only cells you set to minecraft:air "
+        "(interior air pockets, e.g. underwater bases — the surroundings "
+        "stay untouched); 'all' also fills every unset bbox cell with air",
     )
     r.set_defaults(func=cmd_run)
 
@@ -852,6 +917,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="max change entries listed in the report (default: 30)",
     )
     d.set_defaults(func=cmd_diff)
+
+    im = sub.add_parser(
+        "import",
+        help="turn a structure .nbt into a builder script",
+        description=(
+            "Read an existing build (structure-block .nbt) and write an "
+            "mcbuilder script that rebuilds "
+            "it exactly: one constant per block state, same-block runs merged "
+            "into box() calls, grouped by layer, with a size/palette summary "
+            "at the top."
+        ),
+    )
+    im.add_argument("file", help="the structure .nbt file")
+    im.add_argument(
+        "-o", "--output", default=None, help="script to write (default: <file stem>.py next to it)"
+    )
+    im.add_argument(
+        "--keep-air",
+        action="store_true",
+        help="keep air cells from the file as explicit minecraft:air",
+    )
+    im.add_argument("--force", action="store_true", help="overwrite the script if it exists")
+    im.add_argument(
+        "--raw",
+        action="store_true",
+        help="keep every block property as-is (by default properties the registry "
+        "of mc_version doesn't know, e.g. Bedrock leftovers, are dropped)",
+    )
+    im.add_argument("--config", default=None, help="path to mcbuild.toml")
+    im.set_defaults(func=cmd_import)
 
     a = sub.add_parser("assets", help="manage cached Minecraft assets")
     asub = a.add_subparsers(dest="assets_cmd", required=True, metavar="<command>")

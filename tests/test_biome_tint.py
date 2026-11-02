@@ -7,11 +7,10 @@ both tiers read ``_TINT_TABLE`` at call time.
 """
 
 import numpy as np
-import pytest
 from PIL import Image
 
-from mcbuilder import preview as _fast
-from mcbuilder import preview_faithful as pf
+from mcbuilder.render import faithful as pf
+from mcbuilder.render import fast as _fast
 
 
 def _mul(c, m):
@@ -48,6 +47,7 @@ def _up_quad_mean(quads):
 # 1. pinned table values (26.2-verified)
 # ---------------------------------------------------------------------------
 
+
 def test_pinned_table_values():
     assert _fast._TINT_TABLE["minecraft:grass_block"] == (145, 189, 89)
     assert _fast._TINT_TABLE["minecraft:oak_leaves"] == (119, 171, 47)
@@ -63,12 +63,12 @@ def test_pinned_table_values():
 # 2. faithful overlay disambiguation (grass-block analog)
 # ---------------------------------------------------------------------------
 
+
 def test_faithful_tints_only_tintindex_faces(assets_root, monkeypatch):
     tint = (100, 150, 200)
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_overlay", tint)
     fb_blocks = set()
-    quads, fb = pf.resolve_block_quads(
-        "test:test_tint_overlay", assets_root, {}, fb_blocks)
+    quads, fb = pf.resolve_block_quads("test:test_tint_overlay", assets_root, {}, fb_blocks)
     assert fb is False
     assert fb_blocks == set()
 
@@ -86,11 +86,11 @@ def test_faithful_tints_only_tintindex_faces(assets_root, monkeypatch):
 # 3. faithful leaves analog + per-block (not per-texture) lookup
 # ---------------------------------------------------------------------------
 
+
 def test_faithful_tints_all_cube_faces(assets_root, monkeypatch):
     tint = (100, 150, 200)
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_cube", tint)
-    quads, fb = pf.resolve_block_quads(
-        "test:test_tint_cube", assets_root, {}, set())
+    quads, fb = pf.resolve_block_quads("test:test_tint_cube", assets_root, {}, set())
     assert fb is False
     assert len(quads) == 6
 
@@ -103,10 +103,8 @@ def test_faithful_tint_is_per_block_not_per_texture(assets_root, monkeypatch):
     # test_tint_cube and test_tint_cube_b share the same texture file.
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_cube", (100, 150, 200))
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_cube_b", (10, 20, 30))
-    quads_a, _ = pf.resolve_block_quads(
-        "test:test_tint_cube", assets_root, {}, set())
-    quads_b, _ = pf.resolve_block_quads(
-        "test:test_tint_cube_b", assets_root, {}, set())
+    quads_a, _ = pf.resolve_block_quads("test:test_tint_cube", assets_root, {}, set())
+    quads_b, _ = pf.resolve_block_quads("test:test_tint_cube_b", assets_root, {}, set())
     assert _up_quad_mean(quads_a) != _up_quad_mean(quads_b)
     assert _close(_up_quad_mean(quads_a), _tint((200, 200, 200), (100, 150, 200)))
     assert _close(_up_quad_mean(quads_b), _tint((200, 200, 200), (10, 20, 30)))
@@ -116,17 +114,16 @@ def test_faithful_tint_is_per_block_not_per_texture(assets_root, monkeypatch):
 # 4. untinted controls (default-deny)
 # ---------------------------------------------------------------------------
 
+
 def test_faithful_untinted_controls(assets_root):
     # No tintindex and no table entry.
-    quads, fb = pf.resolve_block_quads(
-        "test:test_tint_plain", assets_root, {}, set())
+    quads, fb = pf.resolve_block_quads("test:test_tint_plain", assets_root, {}, set())
     assert fb is False
     assert _close(_up_quad_mean(quads), (120, 120, 120), tol=0.5)
 
     # tintindex 0 inherited from the parent model, but no table entry
     # (cherry/pale-oak leaves analog): stays untinted.
-    quads, fb = pf.resolve_block_quads(
-        "test:test_tint_cherry", assets_root, {}, set())
+    quads, fb = pf.resolve_block_quads("test:test_tint_cherry", assets_root, {}, set())
     assert fb is False
     assert _close(_up_quad_mean(quads), (180, 140, 140), tol=0.5)
 
@@ -135,13 +132,12 @@ def test_faithful_untinted_controls(assets_root):
 # 5. cache isolation
 # ---------------------------------------------------------------------------
 
+
 def test_tint_never_mutates_tex_cache(assets_root, monkeypatch, tex_cache):
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_cube", (100, 150, 200))
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_cube_b", (10, 20, 30))
-    quads_a, _ = pf.resolve_block_quads(
-        "test:test_tint_cube", assets_root, tex_cache, set())
-    quads_b, _ = pf.resolve_block_quads(
-        "test:test_tint_cube_b", assets_root, tex_cache, set())
+    quads_a, _ = pf.resolve_block_quads("test:test_tint_cube", assets_root, tex_cache, set())
+    quads_b, _ = pf.resolve_block_quads("test:test_tint_cube_b", assets_root, tex_cache, set())
 
     # Cached source image is byte-identical to the raw PNG.
     cached = tex_cache["block/tint_gray"]
@@ -156,6 +152,7 @@ def test_tint_never_mutates_tex_cache(assets_root, monkeypatch, tex_cache):
 # 6. fast tier
 # ---------------------------------------------------------------------------
 
+
 def test_fast_tier_tints_and_skips_untinted_vars(assets_root, monkeypatch):
     tint = (100, 150, 200)
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_cube", tint)
@@ -169,10 +166,10 @@ def test_fast_tier_tints_and_skips_untinted_vars(assets_root, monkeypatch):
     # tinted_vars == {"overlay"} here, but the fast tier's face->var rule
     # maps "up" to "side", which is not tinted -> stays raw.
     images, _leaf, tinted_vars = _fast._resolve_model_textures(
-        "test:test_tint_overlay", {}, assets_root)
+        "test:test_tint_overlay", {}, assets_root
+    )
     assert tinted_vars == {"overlay"}
-    faces = _fast._build_face_textures(
-        "test:test_tint_overlay", assets_root, set())
+    faces = _fast._build_face_textures("test:test_tint_overlay", assets_root, set())
     assert _close(_mean(faces["up"]), (210, 210, 210), tol=0.5)
 
 
@@ -183,6 +180,7 @@ def test_fast_tier_water_fallback_color():
 # ---------------------------------------------------------------------------
 # 7. water (faithful tier fluid path)
 # ---------------------------------------------------------------------------
+
 
 def test_faithful_water_pixel(assets_root):
     quads, fb = pf.resolve_block_quads("minecraft:water", assets_root, {})
@@ -199,11 +197,11 @@ def test_faithful_water_pixel(assets_root):
 # 8. tintindex:1 gating (wildflowers/flowerbed analog)
 # ---------------------------------------------------------------------------
 
+
 def test_faithful_tintindex_1_tints(assets_root, monkeypatch):
     tint = (100, 150, 200)
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_index1", tint)
-    quads, fb = pf.resolve_block_quads(
-        "test:test_tint_index1", assets_root, {}, set())
+    quads, fb = pf.resolve_block_quads("test:test_tint_index1", assets_root, {}, set())
     assert fb is False
     # Gating is >= 0, not == 0.
     assert _close(_up_quad_mean(quads), _tint((170, 170, 170), tint), tol=0.5)
@@ -213,15 +211,16 @@ def test_faithful_tintindex_1_tints(assets_root, monkeypatch):
 # 9. fast-tier bamboo limitation (documented, pinned)
 # ---------------------------------------------------------------------------
 
+
 def test_fast_tier_bamboo_limitation(assets_root, monkeypatch):
     # test_tint_multi mirrors real bamboo.json ordering: the untinted
     # stalk apply comes first, the tinted leaf apply second.
     monkeypatch.setitem(_fast._TINT_TABLE, "test:test_tint_multi", (100, 150, 200))
     _images, _leaf, tinted_vars = _fast._resolve_model_textures(
-        "test:test_tint_multi", {}, assets_root)
+        "test:test_tint_multi", {}, assets_root
+    )
     assert tinted_vars == set()
 
-    faces = _fast._build_face_textures(
-        "test:test_tint_multi", assets_root, set())
+    faces = _fast._build_face_textures("test:test_tint_multi", assets_root, set())
     # Stalk-only, untinted: raw (140,140,140).
     assert _close(_mean(faces["up"]), (140, 140, 140), tol=0.5)

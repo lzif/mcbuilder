@@ -120,10 +120,14 @@ with BUILD:
     BUILD.set(1, 4, 2, "minecraft:mossy_stone_brick_stairs[facing=east,half=bottom]")
     BUILD.set(3, 4, 2, "minecraft:stone_brick_stairs[facing=west,half=bottom]")
 
-    BUILD.set(1, 4, 1, "minecraft:mossy_stone_brick_stairs[facing=south,half=bottom,shape=outer_left]")
+    BUILD.set(
+        1, 4, 1, "minecraft:mossy_stone_brick_stairs[facing=south,half=bottom,shape=outer_left]"
+    )
     BUILD.set(3, 4, 1, "minecraft:stone_brick_stairs[facing=south,half=bottom,shape=outer_right]")
     BUILD.set(1, 4, 3, "minecraft:stone_brick_stairs[facing=north,half=bottom,shape=outer_right]")
-    BUILD.set(3, 4, 3, "minecraft:mossy_stone_brick_stairs[facing=north,half=bottom,shape=outer_left]")
+    BUILD.set(
+        3, 4, 3, "minecraft:mossy_stone_brick_stairs[facing=north,half=bottom,shape=outer_left]"
+    )
 
     # 4 cardinal portal arch keystones (supporting the hanging lanterns at y=3)
     BUILD.set(2, 4, 0, "minecraft:polished_andesite_slab[type=bottom]")

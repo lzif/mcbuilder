@@ -92,9 +92,7 @@ def test_nbt_is_opaque_but_syntax_checked(registry):
     )
     assert errors == []
     # Braces inside quoted strings do not count.
-    errors, _ = registry.validate(
-        ['minecraft:chest{CustomName:\'{"text":"a}b"}\'}']
-    )
+    errors, _ = registry.validate(['minecraft:chest{CustomName:\'{"text":"a}b"}\'}'])
     assert errors == []
     # Unbalanced NBT is an error.
     errors, _ = registry.validate(["minecraft:chest{Items:[{id:stone}"])

@@ -33,7 +33,9 @@ def _trapdoor_band():
                 else:
                     facing = "south"
                 g.set(
-                    x, 4, z,
+                    x,
+                    4,
+                    z,
                     f"minecraft:spruce_trapdoor[facing={facing},half=top,open=false]",
                 )
     return g
@@ -43,8 +45,8 @@ def _canopy():
     """Stepped pyramid roof: y=5 7x7 (stair eave + plank field), y=6 3x3
     stepped cap with stair shoulders and a plank crown."""
     g = mb.Geometry()
-    field = mb.part.box(c1=(0, 0, 0), c2=(4, 0, 4), block=SP)
-    for x, y, z, b in field.cells():
+    field = mb.shapes.box((0, 0, 0), (4, 0, 4), SP)
+    for x, _y, z, b in field.cells():
         g.set(x + 1, 5, z + 1, b)
     for i in range(1, 6):
         g.set(i, 5, 0, "minecraft:spruce_stairs[facing=south,half=bottom]")

@@ -6,23 +6,26 @@ a gzipped root compound with ``DataVersion``, ``size``, ``palette`` and
 entities are out of scope (the validator only syntax-checks block-entity
 NBT, and the known consumer can't read them either).
 
-Known consumer: LostQoL's ``StructureNbt`` parser
-(``plugins-src/lostqol/.../waystone/StructureNbt.kt``) reads exactly this
-shape from plugin resources — ``palette`` entries with ``Name`` (+ optional
-``Properties``), ``blocks`` entries with ``pos``/``state``, ``size`` — and
-skips air. The writer mirrors the reference implementation
-(``paper-server/docs/make_waystone_v8.py``): ``pos`` and ``size`` are
-TAG_List of TAG_Int (never TAG_Int_Array — that breaks both the plugin
-parser and ``StructureManager.loadStructure``).
+``pos`` and ``size`` are TAG_List of TAG_Int (never TAG_Int_Array, which
+``StructureManager.loadStructure`` and most parsers reject). The file loads
+in a structure block, Litematica and server-side structure pasters.
 
 Coordinate mapping: ``pos`` is ``[x, y, z]`` offsets from the bbox
 minimum, ``size`` is ``[sx, sy, sz]`` — matching ``VoxelGrid.to_dense``,
 whose array axis 0/1/2 is x/y/z.
 
-Air handling: with ``include_air=False`` (default) neither unset cells
-nor carved-air cells appear in ``blocks`` (air may still sit in the
-palette, unreferenced — vanilla-faithful). With ``include_air=True``,
-unset cells inside the bbox are written explicitly as air.
+Air handling (``air``):
+
+- ``"none"`` (default): neither unset cells nor carved-air
+  cells appear in ``blocks`` (air may still sit in the palette,
+  unreferenced — vanilla-faithful). Pasting leaves whatever was there.
+- ``"explicit"``: only cells explicitly set to ``minecraft:air`` are
+  written; unset cells stay structure-void. Use this for builds that must
+  displace the world *inside* the structure without touching what's
+  *around* it — e.g. an underwater base whose interior air pocket must
+  push out ocean water while the surrounding ocean stays wet.
+- ``"all"``: every cell in the bbox is written; unset cells
+  become air (clears the whole bounding box on paste).
 
 Determinism: palette order follows grid insertion order, ``blocks`` are
 sorted by ``(x, y, z)``, NBT compounds keep insertion order, and the gzip
@@ -111,10 +114,11 @@ def _palette_entry(canonical: str) -> tuple[Compound, str | None]:
         )
     entry = Compound({"Name": String(name)})
     if props:
-        entry["Properties"] = Compound(
-            {k: String(v) for k, v in sorted(props.items())}
-        )
+        entry["Properties"] = Compound({k: String(v) for k, v in sorted(props.items())})
     return entry, warning
+
+
+AIR_MODES = ("none", "explicit", "all")
 
 
 def write_structure_nbt(
@@ -122,13 +126,18 @@ def write_structure_nbt(
     path: Path | str,
     *,
     data_version: int,
-    include_air: bool = False,
+    air: str = "none",
 ) -> list[str]:
     """Write ``grid`` as a gzipped vanilla structure ``.nbt`` file.
+
+    ``air``: ``"none"``, ``"explicit"`` or ``"all"``; see the module docstring.
 
     Returns a list of warning strings (block-entity NBT dropped, ...).
     Raises :class:`ExportError` on an empty grid.
     """
+    if air not in AIR_MODES:
+        raise ExportError(f"air must be one of {AIR_MODES}, got {air!r}")
+    air_mode = air
     arr, palette, _provenance = grid.to_dense()
     if arr.size == 0:
         raise ExportError("build is empty — nothing to export")
@@ -144,7 +153,7 @@ def write_structure_nbt(
             air_idx = i
         nbt_palette.append(entry)
 
-    if include_air and air_idx is None:
+    if air_mode == "all" and air_idx is None:
         # No air was ever placed; the format still needs an air entry for
         # the explicitly-written unset cells below.
         air_idx = len(nbt_palette)
@@ -157,10 +166,10 @@ def write_structure_nbt(
             for z in range(sz):
                 idx = int(arr[x, y, z])
                 if idx == voxels_mod.UNSET:
-                    if not include_air:
+                    if air_mode != "all":
                         continue
-                    idx = air_idx  # set above when include_air is True
-                elif not include_air and idx == air_idx:
+                    idx = air_idx  # set above when air_mode is "all"
+                elif air_mode == "none" and idx == air_idx:
                     continue
                 block_tags.append(
                     Compound(

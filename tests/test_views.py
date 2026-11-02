@@ -1,8 +1,8 @@
-"""Grammar tests for mcbuilder.views (PLAN section 4.4)."""
+"""Grammar tests for mcbuilder.views."""
 
 import pytest
 
-from mcbuilder.views import (
+from mcbuilder.render.views import (
     MAX_VIEWS,
     View,
     ViewError,
@@ -36,8 +36,7 @@ def test_top():
 def test_orbit_math():
     views = parse_views("orbit8_el25")
     assert len(views) == 8
-    assert [v.azimuth for v in views] == [0.0, 45.0, 90.0, 135.0,
-                                          180.0, 225.0, 270.0, 315.0]
+    assert [v.azimuth for v in views] == [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
     assert all(v.elevation == 25.0 for v in views)
     assert views[0].label == "az000_el025"
     assert views[3].label == "az135_el025"
@@ -59,21 +58,24 @@ def test_whitespace_tolerated():
     assert [v.label for v in views] == ["az045_el025", "top"]
 
 
-@pytest.mark.parametrize("bad", [
-    "az45_el25x",      # trailing junk
-    "az_el25",         # missing digits
-    "az045el025",      # missing underscore
-    "az045_el",        # missing elevation
-    "orbit_el25",      # missing count
-    "orbit0_el25",     # zero count
-    "iso2",            # unknown word
-    "bottom",          # unknown word
-    "az045_el025,top",  # comma is not a separator (ONE separator style)
-    "",                # empty spec
-    "az045_el025;",    # trailing empty token
-    "az999_el025",     # azimuth out of range
-    "az045_el91",      # elevation out of range
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "az45_el25x",  # trailing junk
+        "az_el25",  # missing digits
+        "az045el025",  # missing underscore
+        "az045_el",  # missing elevation
+        "orbit_el25",  # missing count
+        "orbit0_el25",  # zero count
+        "iso2",  # unknown word
+        "bottom",  # unknown word
+        "az045_el025,top",  # comma is not a separator (ONE separator style)
+        "",  # empty spec
+        "az045_el025;",  # trailing empty token
+        "az999_el025",  # azimuth out of range
+        "az045_el91",  # elevation out of range
+    ],
+)
 def test_malformed_tokens_raise_with_token_named(bad):
     with pytest.raises(ViewError) as exc_info:
         parse_views(bad)
@@ -100,8 +102,14 @@ def test_default_views_is_nine():
     views = default_views()
     assert len(views) == 9
     assert [v.label for v in views] == [
-        "az000_el025", "az045_el025", "az090_el025", "az135_el025",
-        "az180_el025", "az225_el025", "az270_el025", "az315_el025",
+        "az000_el025",
+        "az045_el025",
+        "az090_el025",
+        "az135_el025",
+        "az180_el025",
+        "az225_el025",
+        "az270_el025",
+        "az315_el025",
         "top",
     ]
     assert all(v.elevation == 25.0 for v in views[:8])
@@ -112,7 +120,11 @@ def test_with_count_appends_orbit():
     base = parse_views("top")
     out = with_count(base, 4)
     assert [v.label for v in out] == [
-        "top", "az000_el025", "az090_el025", "az180_el025", "az270_el025",
+        "top",
+        "az000_el025",
+        "az090_el025",
+        "az180_el025",
+        "az270_el025",
     ]
     # Input list is not mutated.
     assert [v.label for v in base] == ["top"]

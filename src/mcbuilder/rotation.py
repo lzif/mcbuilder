@@ -1,12 +1,9 @@
-"""Structure rotation semantics (PLAN §3, normative table).
+"""Structure rotation semantics.
 
-Mirrors ``StructurePaster.rotateBlockData()`` (LostQoL, commit
-``0f83d68`` — spot-checked against the Kotlin): the exact position and
-blockstate transforms a structure paste applies for each
-``StructureRotation``. mcbuilder uses this to verify designs rotate
-cleanly (the v0.2 acceptance is "pastes correctly at all 4 rotations")
-and so the direction-trusted preview tier shares one source of truth
-with the server-side paster.
+The position and blockstate transforms a structure paste applies for each
+rotation (the same table Bukkit's ``StructureRotation`` uses), so a design
+checked here pastes correctly at all four rotations. ``Build.place`` and
+``Geometry.rotate`` use it too.
 
 Rotations (clockwise viewed from above, matching Bukkit's
 ``StructureRotation``):
@@ -66,14 +63,11 @@ _PROP_RE = re.compile(r"\[([^\]]*)\]")
 
 def _check_rotation(rotation: str) -> str:
     if rotation not in ROTATIONS:
-        raise McbuilderError(
-            f"invalid rotation {rotation!r}; expected one of {list(ROTATIONS)}"
-        )
+        raise McbuilderError(f"invalid rotation {rotation!r}; expected one of {list(ROTATIONS)}")
     return rotation
 
 
-def _rotate_point(x: int, z: int, ax: int, az: int,
-                  rotation: str) -> tuple[int, int]:
+def _rotate_point(x: int, z: int, ax: int, az: int, rotation: str) -> tuple[int, int]:
     """Rotate point ``(x, z)`` about anchor ``(ax, az)`` (cell-corner frame).
 
     Same clockwise-from-above convention as :func:`rotate_position`, but
@@ -91,9 +85,7 @@ def _rotate_point(x: int, z: int, ax: int, az: int,
     return ax + rx, az + rz
 
 
-def rotate_position(
-    x: int, z: int, size: int, rotation: str
-) -> tuple[int, int]:
+def rotate_position(x: int, z: int, size: int, rotation: str) -> tuple[int, int]:
     """Rotate a footprint cell ``(x, z)`` for a square footprint of ``size``.
 
     Y is untouched (rotations are horizontal). Matches the paster's
@@ -152,8 +144,7 @@ def _remap_props(props: dict[str, str], rotation: str) -> dict[str, str]:
             out["axis"] = "x"
     rot = out.get("rotation")
     if rot is not None and rot.lstrip("-").isdigit():
-        shift = {"CLOCKWISE_90": 4, "CLOCKWISE_180": 8,
-                 "COUNTERCLOCKWISE_90": 12}[rotation]
+        shift = {"CLOCKWISE_90": 4, "CLOCKWISE_180": 8, "COUNTERCLOCKWISE_90": 12}[rotation]
         out["rotation"] = str((int(rot) + shift) % 16)
     return out
 
@@ -218,9 +209,7 @@ def mirror_blockstate(canonical: str, axis: str) -> str:
     limitations, documented here rather than guessed.
     """
     if axis not in ("x", "z"):
-        raise McbuilderError(
-            f"invalid mirror axis {axis!r}; expected 'x' or 'z'"
-        )
+        raise McbuilderError(f"invalid mirror axis {axis!r}; expected 'x' or 'z'")
     name, props, nbt = _split_blockstate_props(canonical)
     if not props:
         return canonicalize(canonical)
